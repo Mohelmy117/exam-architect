@@ -1,0 +1,7 @@
+project_id = "adyctepaqbgbmrlvgbjs"
+
+[functions.generate-questions]
+verify_jwt = true
+
+[functions.parse-pdf-exam]
+verify_jwt = true
