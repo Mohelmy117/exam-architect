@@ -213,11 +213,24 @@ export default function CreateExam() {
           </div>
 
           <div className="space-y-6">
-            <Tabs defaultValue="ai">
-              <TabsList className="grid w-full grid-cols-2">
+            <Tabs defaultValue="manual">
+              <TabsList className="grid w-full grid-cols-3">
+                <TabsTrigger value="manual">Manual</TabsTrigger>
                 <TabsTrigger value="ai">AI Generate</TabsTrigger>
-                <TabsTrigger value="pdf">PDF Import</TabsTrigger>
+                <TabsTrigger value="pdf">From PDF</TabsTrigger>
               </TabsList>
+              <TabsContent value="manual" className="mt-4">
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-base">Add Questions Manually</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <p className="text-sm text-muted-foreground mb-4">
+                      Use the question editor on the left to add and edit questions one by one.
+                    </p>
+                  </CardContent>
+                </Card>
+              </TabsContent>
               <TabsContent value="ai" className="mt-4">
                 <AIQuestionGenerator
                   onQuestionsGenerated={handleAIQuestions}
@@ -225,7 +238,14 @@ export default function CreateExam() {
                 />
               </TabsContent>
               <TabsContent value="pdf" className="mt-4">
-                <PDFExamParser onQuestionsGenerated={handlePDFQuestions} />
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-base">Create Exam from PDF</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <PDFExamParser onQuestionsGenerated={handlePDFQuestions} />
+                  </CardContent>
+                </Card>
               </TabsContent>
             </Tabs>
 
