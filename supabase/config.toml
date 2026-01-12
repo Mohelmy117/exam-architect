@@ -1,10 +1,10 @@
 project_id = "adyctepaqbgbmrlvgbjs"
 
 [functions.generate-questions]
-verify_jwt = true
+verify_jwt = false
 
 [functions.parse-pdf-exam]
-verify_jwt = true
+verify_jwt = false
 
 [functions.send-email]
 verify_jwt = false
