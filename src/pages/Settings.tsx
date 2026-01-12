@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -11,7 +11,7 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
-import { Loader2, User, Bell, Palette, Shield, Trash2 } from 'lucide-react';
+import { Loader2, User, Bell, Palette, Shield, Trash2, Upload, Camera } from 'lucide-react';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -27,11 +27,13 @@ import {
 export default function Settings() {
   const { user, signOut } = useAuth();
   const [loading, setLoading] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [displayName, setDisplayName] = useState('');
   const [avatarUrl, setAvatarUrl] = useState('');
   const [emailNotifications, setEmailNotifications] = useState(true);
   const [examReminders, setExamReminders] = useState(true);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (user) {
@@ -39,6 +41,70 @@ export default function Settings() {
       setAvatarUrl(user.user_metadata?.avatar_url || '');
     }
   }, [user]);
+
+  const handleAvatarUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file || !user) return;
+
+    // Validate file type
+    if (!file.type.startsWith('image/')) {
+      toast.error('Please upload an image file');
+      return;
+    }
+
+    // Validate file size (max 5MB)
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error('Image must be less than 5MB');
+      return;
+    }
+
+    setUploading(true);
+    try {
+      // Create unique file name
+      const fileExt = file.name.split('.').pop();
+      const fileName = `${user.id}/avatar-${Date.now()}.${fileExt}`;
+
+      // Delete old avatar if exists
+      if (avatarUrl && avatarUrl.includes('avatars')) {
+        const oldPath = avatarUrl.split('/avatars/')[1];
+        if (oldPath) {
+          await supabase.storage.from('avatars').remove([oldPath]);
+        }
+      }
+
+      // Upload new avatar
+      const { error: uploadError } = await supabase.storage
+        .from('avatars')
+        .upload(fileName, file, { upsert: true });
+
+      if (uploadError) throw uploadError;
+
+      // Get public URL
+      const { data: { publicUrl } } = supabase.storage
+        .from('avatars')
+        .getPublicUrl(fileName);
+
+      setAvatarUrl(publicUrl);
+
+      // Update user metadata
+      const { error: updateError } = await supabase.auth.updateUser({
+        data: { avatar_url: publicUrl },
+      });
+
+      if (updateError) throw updateError;
+
+      toast.success('Avatar uploaded successfully');
+    } catch (error) {
+      console.error('Error uploading avatar:', error);
+      toast.error('Failed to upload avatar');
+    } finally {
+      setUploading(false);
+      // Reset file input
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+    }
+  };
 
   const updateProfile = async () => {
     if (!user) return;
@@ -103,19 +169,54 @@ export default function Settings() {
               <CardDescription>Manage your profile information</CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
-              <div className="flex items-center gap-4">
-                <Avatar className="h-20 w-20">
-                  <AvatarImage src={avatarUrl} alt={displayName} />
-                  <AvatarFallback className="text-lg">{userInitials}</AvatarFallback>
-                </Avatar>
-                <div className="flex-1 space-y-2">
-                  <Label htmlFor="avatarUrl">Avatar URL</Label>
-                  <Input
-                    id="avatarUrl"
-                    value={avatarUrl}
-                    onChange={(e) => setAvatarUrl(e.target.value)}
-                    placeholder="https://example.com/avatar.jpg"
+              <div className="flex items-center gap-6">
+                <div className="relative group">
+                  <Avatar className="h-24 w-24 ring-2 ring-border">
+                    <AvatarImage src={avatarUrl} alt={displayName} />
+                    <AvatarFallback className="text-xl">{userInitials}</AvatarFallback>
+                  </Avatar>
+                  <button
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={uploading}
+                    className="absolute inset-0 flex items-center justify-center bg-black/50 rounded-full opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer disabled:cursor-not-allowed"
+                  >
+                    {uploading ? (
+                      <Loader2 className="h-6 w-6 text-white animate-spin" />
+                    ) : (
+                      <Camera className="h-6 w-6 text-white" />
+                    )}
+                  </button>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/*"
+                    onChange={handleAvatarUpload}
+                    className="hidden"
                   />
+                </div>
+                <div className="flex-1 space-y-3">
+                  <div>
+                    <Label>Profile Picture</Label>
+                    <p className="text-sm text-muted-foreground">
+                      Click on the avatar to upload a new photo
+                    </p>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={uploading}
+                  >
+                    {uploading ? (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    ) : (
+                      <Upload className="mr-2 h-4 w-4" />
+                    )}
+                    Upload Photo
+                  </Button>
+                  <p className="text-xs text-muted-foreground">
+                    JPG, PNG or GIF. Max 5MB.
+                  </p>
                 </div>
               </div>
 
