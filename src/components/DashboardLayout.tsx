@@ -25,6 +25,7 @@ const navItems = [
   { to: '/dashboard', label: 'Dashboard', icon: Home },
   { to: '/exams', label: 'My Exams', icon: FileText },
   { to: '/exams/create', label: 'Create Exam', icon: PlusCircle },
+  { to: '/analytics', label: 'Analytics', icon: BarChart3 },
   { to: '/settings', label: 'Settings', icon: Settings },
 ];
 
