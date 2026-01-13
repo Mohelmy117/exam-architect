@@ -8,9 +8,10 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Textarea } from '@/components/ui/textarea';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Exam, Question, ExamAttempt } from '@/types/exam';
 import { toast } from 'sonner';
-import { Loader2, CheckCircle, AlertCircle } from 'lucide-react';
+import { Loader2, CheckCircle, AlertCircle, Lightbulb, ChevronDown, CheckCircle2, XCircle } from 'lucide-react';
 
 export default function TakeExam() {
   const { id } = useParams<{ id: string }>();
@@ -24,6 +25,7 @@ export default function TakeExam() {
   const [startedAt, setStartedAt] = useState<Date | null>(null);
   const [submitted, setSubmitted] = useState(false);
   const [score, setScore] = useState<number | null>(null);
+  const [openExplanations, setOpenExplanations] = useState<Record<string, boolean>>({});
 
   // Student info
   const [studentName, setStudentName] = useState('');
@@ -125,6 +127,17 @@ export default function TakeExam() {
     submitExam();
   }, [submitExam]);
 
+  const toggleExplanation = (questionId: string) => {
+    setOpenExplanations(prev => ({
+      ...prev,
+      [questionId]: !prev[questionId]
+    }));
+  };
+
+  const isCorrect = (questionId: string, correctAnswer: string) => {
+    return answers[questionId] === correctAnswer;
+  };
+
   if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center">
@@ -146,20 +159,141 @@ export default function TakeExam() {
     );
   }
 
+  // Results view after submission
   if (submitted) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-background p-4">
-        <Card className="w-full max-w-md">
-          <CardContent className="py-12 text-center">
-            <CheckCircle className="mx-auto h-16 w-16 text-success" />
-            <h2 className="mt-4 text-2xl font-bold">Exam Submitted!</h2>
-            <p className="mt-2 text-muted-foreground">Thank you for completing the exam.</p>
-            <div className="mt-6 rounded-lg bg-muted p-6">
-              <p className="text-sm text-muted-foreground">Your Score</p>
-              <p className="text-4xl font-bold">{score}%</p>
+      <div className="min-h-screen bg-background">
+        <header className="sticky top-0 z-50 border-b bg-background/95 backdrop-blur">
+          <div className="container flex h-16 items-center justify-between">
+            <h1 className="text-lg font-semibold">{exam.title} - Results</h1>
+            <div className="rounded-lg bg-primary px-4 py-2 text-primary-foreground">
+              Score: {score}%
             </div>
-          </CardContent>
-        </Card>
+          </div>
+        </header>
+
+        <main className="container py-8">
+          <div className="mx-auto max-w-3xl space-y-6">
+            <Card className="border-2 border-primary/20 bg-primary/5">
+              <CardContent className="py-8 text-center">
+                <CheckCircle className="mx-auto h-16 w-16 text-primary" />
+                <h2 className="mt-4 text-2xl font-bold">Exam Completed!</h2>
+                <p className="mt-2 text-muted-foreground">
+                  Review your answers and explanations below
+                </p>
+                <div className="mt-6 inline-flex items-center gap-4 rounded-lg bg-background p-4 shadow-sm">
+                  <div className="text-center">
+                    <p className="text-sm text-muted-foreground">Your Score</p>
+                    <p className="text-3xl font-bold text-primary">{score}%</p>
+                  </div>
+                  <div className="h-12 w-px bg-border" />
+                  <div className="text-center">
+                    <p className="text-sm text-muted-foreground">Correct</p>
+                    <p className="text-3xl font-bold">
+                      {questions.filter(q => isCorrect(q.id!, q.correct_answer)).length}/{questions.length}
+                    </p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            {questions.map((question, index) => {
+              const correct = isCorrect(question.id!, question.correct_answer);
+              const hasExplanation = question.explanation || question.solution;
+              
+              return (
+                <Card 
+                  key={question.id} 
+                  className={`transition-all ${correct ? 'border-green-500/30 bg-green-50/50 dark:bg-green-950/20' : 'border-red-500/30 bg-red-50/50 dark:bg-red-950/20'}`}
+                >
+                  <CardHeader className="pb-3">
+                    <div className="flex items-start justify-between">
+                      <CardTitle className="flex items-center gap-2 text-base">
+                        {correct ? (
+                          <CheckCircle2 className="h-5 w-5 text-green-600" />
+                        ) : (
+                          <XCircle className="h-5 w-5 text-red-600" />
+                        )}
+                        Question {index + 1}
+                      </CardTitle>
+                      <span className={`rounded-full px-3 py-1 text-xs font-medium ${correct ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-100' : 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-100'}`}>
+                        {correct ? 'Correct' : 'Incorrect'}
+                      </span>
+                    </div>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <p className="text-lg">{question.question_text}</p>
+
+                    {question.image_url && (
+                      <img
+                        src={question.image_url}
+                        alt="Question"
+                        className="max-h-64 rounded-lg object-contain"
+                      />
+                    )}
+
+                    <div className="space-y-2 rounded-lg bg-background/80 p-4">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-medium text-muted-foreground">Your answer:</span>
+                        <span className={`font-medium ${correct ? 'text-green-600' : 'text-red-600'}`}>
+                          {answers[question.id!] || 'No answer'}
+                        </span>
+                      </div>
+                      {!correct && (
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-medium text-muted-foreground">Correct answer:</span>
+                          <span className="font-medium text-green-600">{question.correct_answer}</span>
+                        </div>
+                      )}
+                    </div>
+
+                    {hasExplanation && (
+                      <Collapsible
+                        open={openExplanations[question.id!]}
+                        onOpenChange={() => toggleExplanation(question.id!)}
+                      >
+                        <CollapsibleTrigger asChild>
+                          <Button variant="outline" className="w-full justify-between">
+                            <span className="flex items-center gap-2">
+                              <Lightbulb className="h-4 w-4 text-yellow-500" />
+                              Explanation
+                            </span>
+                            <ChevronDown className={`h-4 w-4 transition-transform ${openExplanations[question.id!] ? 'rotate-180' : ''}`} />
+                          </Button>
+                        </CollapsibleTrigger>
+                        <CollapsibleContent className="mt-3">
+                          <div className="rounded-lg border bg-yellow-50/50 p-4 dark:bg-yellow-950/20">
+                            {question.explanation && (
+                              <div className="space-y-2">
+                                <h4 className="flex items-center gap-2 font-semibold text-yellow-800 dark:text-yellow-200">
+                                  <Lightbulb className="h-4 w-4" />
+                                  AI Explanation
+                                </h4>
+                                <p className="text-sm text-yellow-900 dark:text-yellow-100 whitespace-pre-wrap">
+                                  {question.explanation}
+                                </p>
+                              </div>
+                            )}
+                            {question.solution && (
+                              <div className={`space-y-2 ${question.explanation ? 'mt-4 border-t border-yellow-200 pt-4 dark:border-yellow-800' : ''}`}>
+                                <h4 className="font-semibold text-yellow-800 dark:text-yellow-200">
+                                  Solution from Exam
+                                </h4>
+                                <p className="text-sm text-yellow-900 dark:text-yellow-100 whitespace-pre-wrap">
+                                  {question.solution}
+                                </p>
+                              </div>
+                            )}
+                          </div>
+                        </CollapsibleContent>
+                      </Collapsible>
+                    )}
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </div>
+        </main>
       </div>
     );
   }

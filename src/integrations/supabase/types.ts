@@ -93,6 +93,7 @@ export type Database = {
           correct_answer: string | null
           created_at: string
           exam_id: string
+          explanation: string | null
           id: string
           image_url: string | null
           options: Json | null
@@ -105,6 +106,7 @@ export type Database = {
           correct_answer?: string | null
           created_at?: string
           exam_id: string
+          explanation?: string | null
           id?: string
           image_url?: string | null
           options?: Json | null
@@ -117,6 +119,7 @@ export type Database = {
           correct_answer?: string | null
           created_at?: string
           exam_id?: string
+          explanation?: string | null
           id?: string
           image_url?: string | null
           options?: Json | null
