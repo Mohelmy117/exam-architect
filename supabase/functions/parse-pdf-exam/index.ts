@@ -11,6 +11,7 @@ interface Question {
   options?: string[];
   correct_answer: string;
   solution?: string;
+  explanation?: string;
   order_index: number;
 }
 
@@ -53,34 +54,72 @@ Deno.serve(async (req) => {
 
     console.log("Parsing PDF exam...", hasSeparateSolutions ? "with separate solutions" : "single PDF");
 
-    let prompt = "";
-    
+    // Build the messages array with PDF as inline data for vision model
+    const messages: any[] = [
+      {
+        role: "system",
+        content: `You are an expert exam parser and educational content creator. Your task is to:
+1. Extract all questions from the PDF document exactly as they appear
+2. Identify the question type (multiple_choice, true_false, or short_answer)
+3. Extract all answer options for multiple choice questions
+4. Identify the correct answer from the solutions provided
+5. Extract the solution/working if provided
+6. Generate a clear, educational explanation for each question that helps students understand:
+   - Why the correct answer is right
+   - Why other options are wrong (for multiple choice)
+   - The key concepts being tested
+   - Any helpful tips or mnemonics
+
+IMPORTANT: Return ONLY valid JSON array, no other text. Each question object must have:
+- question_text: string (the full question)
+- question_type: "multiple_choice" | "true_false" | "short_answer"
+- options: string[] (for multiple choice, without A/B/C/D prefixes)
+- correct_answer: string (the correct answer text)
+- solution: string (the original solution from PDF if available, or empty string)
+- explanation: string (your AI-generated educational explanation)`
+      }
+    ];
+
+    // Add the PDF content as base64 for vision processing
     if (hasSeparateSolutions && solutionsPdf) {
-      prompt = `I have two PDFs - one with exam questions and one with solutions.
-
-Questions PDF (base64): ${questionsPdf.substring(0, 5000)}...
-
-Solutions PDF (base64): ${solutionsPdf.substring(0, 5000)}...
-
-Extract all questions from the questions PDF and match them with their solutions from the solutions PDF.`;
+      messages.push({
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: "I'm providing two PDFs - the first is the exam questions, the second is the solutions. Extract all questions, match them with solutions, and generate helpful explanations."
+          },
+          {
+            type: "image_url",
+            image_url: {
+              url: `data:application/pdf;base64,${questionsPdf}`
+            }
+          },
+          {
+            type: "image_url",
+            image_url: {
+              url: `data:application/pdf;base64,${solutionsPdf}`
+            }
+          }
+        ]
+      });
     } else {
-      prompt = `I have a PDF containing exam questions (possibly with solutions included).
-
-PDF content (base64): ${questionsPdf.substring(0, 10000)}...
-
-Extract all questions from this PDF.`;
+      messages.push({
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: "Extract all questions from this PDF. If solutions are included, use them. Generate helpful educational explanations for each question."
+          },
+          {
+            type: "image_url",
+            image_url: {
+              url: `data:application/pdf;base64,${questionsPdf}`
+            }
+          }
+        ]
+      });
     }
-
-    prompt += `
-
-For each question, determine:
-- question_text: The full question text
-- question_type: "multiple_choice" if it has options A/B/C/D, "true_false" if it's true/false, otherwise "short_answer"
-- options: Array of options if multiple choice (just the text, without A/B/C/D prefixes)
-- correct_answer: The correct answer text
-- solution: The explanation if provided
-
-Return a JSON array of questions. Respond ONLY with valid JSON, no other text.`;
 
     const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
@@ -89,14 +128,8 @@ Return a JSON array of questions. Respond ONLY with valid JSON, no other text.`;
         "Authorization": `Bearer ${Deno.env.get("LOVABLE_API_KEY")}`,
       },
       body: JSON.stringify({
-        model: "google/gemini-3-flash-preview",
-        messages: [
-          {
-            role: "system",
-            content: "You are an expert at parsing exam documents. Extract questions accurately and structure them properly. Always respond with valid JSON only.",
-          },
-          { role: "user", content: prompt },
-        ],
+        model: "google/gemini-2.5-pro",
+        messages,
         temperature: 0.3,
       }),
     });
@@ -110,26 +143,37 @@ Return a JSON array of questions. Respond ONLY with valid JSON, no other text.`;
     const aiResponse = await response.json();
     const content = aiResponse.choices?.[0]?.message?.content || "";
 
+    console.log("AI response received, parsing JSON...");
+
     // Parse the JSON from the response
     let questions: Question[] = [];
     try {
+      // Try to find JSON array in the response
       const jsonMatch = content.match(/\[[\s\S]*\]/);
       if (jsonMatch) {
         questions = JSON.parse(jsonMatch[0]);
+      } else {
+        // Try parsing the whole content as JSON
+        questions = JSON.parse(content);
       }
     } catch (parseError) {
       console.error("Failed to parse AI response:", parseError);
-      console.log("Raw content:", content);
+      console.log("Raw content:", content.substring(0, 1000));
       throw new Error("Failed to parse questions from PDF");
     }
 
-    // Add order_index to questions
+    // Add order_index and ensure all fields exist
     questions = questions.map((q, i) => ({
-      ...q,
+      question_text: q.question_text || "",
+      question_type: q.question_type || "short_answer",
+      options: q.options || [],
+      correct_answer: q.correct_answer || "",
+      solution: q.solution || "",
+      explanation: q.explanation || "",
       order_index: i,
     }));
 
-    console.log(`Successfully parsed ${questions.length} questions from PDF`);
+    console.log(`Successfully parsed ${questions.length} questions from PDF with explanations`);
 
     return new Response(JSON.stringify({ questions }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
