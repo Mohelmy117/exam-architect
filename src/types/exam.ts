@@ -7,6 +7,7 @@ export interface Question {
   correct_answer: string;
   image_url?: string;
   solution?: string;
+  explanation?: string;
   order_index: number;
 }
 
