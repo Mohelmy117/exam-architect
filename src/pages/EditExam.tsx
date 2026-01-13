@@ -128,6 +128,7 @@ export default function EditExam() {
         correct_answer: q.correct_answer,
         image_url: q.image_url,
         solution: q.solution,
+        explanation: q.explanation,
         order_index: q.order_index,
       }));
 

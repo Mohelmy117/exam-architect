@@ -22,6 +22,7 @@ export function QuestionEditor({ questions, onChange, readOnly = false }: Questi
       options: ['', '', '', ''],
       correct_answer: '',
       solution: '',
+      explanation: '',
       order_index: questions.length,
     };
     onChange([...questions, newQuestion]);
@@ -190,13 +191,29 @@ export function QuestionEditor({ questions, onChange, readOnly = false }: Questi
             )}
 
             <div className="space-y-2">
-              <Label>Solution/Explanation (optional)</Label>
+              <Label>Solution (optional)</Label>
               <Textarea
                 value={question.solution || ''}
                 onChange={(e) => updateQuestion(qIndex, { solution: e.target.value })}
-                placeholder="Explain why this is the correct answer..."
+                placeholder="Original solution from the exam..."
                 disabled={readOnly}
               />
+            </div>
+
+            <div className="space-y-2">
+              <Label>AI Explanation (optional)</Label>
+              <Textarea
+                value={question.explanation || ''}
+                onChange={(e) => updateQuestion(qIndex, { explanation: e.target.value })}
+                placeholder="AI-generated explanation for students..."
+                disabled={readOnly}
+                className="border-yellow-200 focus:border-yellow-400"
+              />
+              {question.explanation && (
+                <p className="text-xs text-muted-foreground">
+                  This explanation will be shown to students after they submit the exam.
+                </p>
+              )}
             </div>
           </CardContent>
         </Card>

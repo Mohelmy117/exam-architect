@@ -75,7 +75,7 @@ export function PDFExamParser({ onQuestionsGenerated }: PDFExamParserProps) {
           AI Agent to Create Exam from PDF
         </CardTitle>
         <CardDescription>
-          Upload a PDF with questions (and optionally solutions) to automatically extract and structure them.
+          Upload a PDF exam and our AI will extract questions, identify correct answers, and generate helpful explanations for each question.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
