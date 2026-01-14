@@ -9,6 +9,16 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Textarea } from '@/components/ui/textarea';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Exam, Question, ExamAttempt } from '@/types/exam';
 import { toast } from 'sonner';
 import { Loader2, CheckCircle, AlertCircle, Lightbulb, ChevronDown, CheckCircle2, XCircle, Circle } from 'lucide-react';
@@ -27,6 +37,7 @@ export default function TakeExam() {
   const [submitted, setSubmitted] = useState(false);
   const [score, setScore] = useState<number | null>(null);
   const [openExplanations, setOpenExplanations] = useState<Record<string, boolean>>({});
+  const [showSubmitDialog, setShowSubmitDialog] = useState(false);
 
   // Student info
   const [studentName, setStudentName] = useState('');
@@ -343,12 +354,21 @@ export default function TakeExam() {
   }
 
   const answeredCount = Object.keys(answers).filter(key => answers[key]?.trim()).length;
+  const unansweredCount = questions.length - answeredCount;
   const progressPercent = questions.length > 0 ? (answeredCount / questions.length) * 100 : 0;
 
   const scrollToQuestion = (questionId: string) => {
     const element = document.getElementById(`question-${questionId}`);
     if (element) {
       element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  };
+
+  const handleSubmitClick = () => {
+    if (unansweredCount > 0) {
+      setShowSubmitDialog(true);
+    } else {
+      submitExam();
     }
   };
 
@@ -366,7 +386,7 @@ export default function TakeExam() {
                   onTimeUp={handleTimeUp}
                 />
               )}
-              <Button onClick={submitExam} disabled={submitting}>
+              <Button onClick={handleSubmitClick} disabled={submitting}>
                 {submitting ? (
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                 ) : (
@@ -478,7 +498,7 @@ export default function TakeExam() {
           ))}
 
           <div className="flex justify-end">
-            <Button onClick={submitExam} size="lg" disabled={submitting}>
+            <Button onClick={handleSubmitClick} size="lg" disabled={submitting}>
               {submitting ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -491,6 +511,28 @@ export default function TakeExam() {
           </div>
         </div>
       </main>
+
+      {/* Confirmation Dialog for Unanswered Questions */}
+      <AlertDialog open={showSubmitDialog} onOpenChange={setShowSubmitDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2">
+              <AlertCircle className="h-5 w-5 text-yellow-500" />
+              Unanswered Questions
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              You have <span className="font-semibold text-foreground">{unansweredCount}</span> unanswered {unansweredCount === 1 ? 'question' : 'questions'}. 
+              Are you sure you want to submit your exam? Unanswered questions will be marked as incorrect.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Review Answers</AlertDialogCancel>
+            <AlertDialogAction onClick={submitExam}>
+              Submit Anyway
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
