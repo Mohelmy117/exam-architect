@@ -11,7 +11,8 @@ import { Textarea } from '@/components/ui/textarea';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Exam, Question, ExamAttempt } from '@/types/exam';
 import { toast } from 'sonner';
-import { Loader2, CheckCircle, AlertCircle, Lightbulb, ChevronDown, CheckCircle2, XCircle } from 'lucide-react';
+import { Loader2, CheckCircle, AlertCircle, Lightbulb, ChevronDown, CheckCircle2, XCircle, Circle } from 'lucide-react';
+import { Progress } from '@/components/ui/progress';
 
 export default function TakeExam() {
   const { id } = useParams<{ id: string }>();
@@ -341,26 +342,70 @@ export default function TakeExam() {
     );
   }
 
+  const answeredCount = Object.keys(answers).filter(key => answers[key]?.trim()).length;
+  const progressPercent = questions.length > 0 ? (answeredCount / questions.length) * 100 : 0;
+
+  const scrollToQuestion = (questionId: string) => {
+    const element = document.getElementById(`question-${questionId}`);
+    if (element) {
+      element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  };
+
   return (
     <div className="min-h-screen bg-background">
       <header className="sticky top-0 z-50 border-b bg-background/95 backdrop-blur">
-        <div className="container flex h-16 items-center justify-between">
-          <h1 className="text-lg font-semibold">{exam.title}</h1>
-          <div className="flex items-center gap-4">
-            {exam.time_limit_minutes && startedAt && (
-              <ExamTimer
-                timeLimitMinutes={exam.time_limit_minutes}
-                startedAt={startedAt}
-                onTimeUp={handleTimeUp}
-              />
-            )}
-            <Button onClick={submitExam} disabled={submitting}>
-              {submitting ? (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              ) : (
-                'Submit Exam'
+        <div className="container space-y-3 py-3">
+          <div className="flex items-center justify-between">
+            <h1 className="text-lg font-semibold">{exam.title}</h1>
+            <div className="flex items-center gap-4">
+              {exam.time_limit_minutes && startedAt && (
+                <ExamTimer
+                  timeLimitMinutes={exam.time_limit_minutes}
+                  startedAt={startedAt}
+                  onTimeUp={handleTimeUp}
+                />
               )}
-            </Button>
+              <Button onClick={submitExam} disabled={submitting}>
+                {submitting ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  'Submit Exam'
+                )}
+              </Button>
+            </div>
+          </div>
+          
+          {/* Progress Section */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-muted-foreground">
+                Progress: {answeredCount} of {questions.length} answered
+              </span>
+              <span className="font-medium text-primary">{Math.round(progressPercent)}%</span>
+            </div>
+            <Progress value={progressPercent} className="h-2" />
+            
+            {/* Question Navigator */}
+            <div className="flex flex-wrap gap-1.5 pt-1">
+              {questions.map((q, index) => {
+                const isAnswered = answers[q.id!]?.trim();
+                return (
+                  <button
+                    key={q.id}
+                    onClick={() => scrollToQuestion(q.id!)}
+                    className={`flex h-8 w-8 items-center justify-center rounded-full text-xs font-medium transition-all hover:scale-110 ${
+                      isAnswered
+                        ? 'bg-primary text-primary-foreground'
+                        : 'bg-muted text-muted-foreground hover:bg-muted/80'
+                    }`}
+                    title={`Question ${index + 1}${isAnswered ? ' (Answered)' : ' (Unanswered)'}`}
+                  >
+                    {index + 1}
+                  </button>
+                );
+              })}
+            </div>
           </div>
         </div>
       </header>
@@ -368,7 +413,7 @@ export default function TakeExam() {
       <main className="container py-8">
         <div className="mx-auto max-w-3xl space-y-6">
           {questions.map((question, index) => (
-            <Card key={question.id} className="question-card">
+            <Card key={question.id} id={`question-${question.id}`} className="question-card scroll-mt-48">
               <CardHeader>
                 <CardTitle className="text-base">
                   Question {index + 1} of {questions.length}
