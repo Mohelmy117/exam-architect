@@ -7,7 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { Exam } from '@/types/exam';
-import { Edit, Trash2, Copy, ExternalLink, Clock, PlusCircle } from 'lucide-react';
+import { Edit, Trash2, Copy, ExternalLink, Clock, PlusCircle, Play } from 'lucide-react';
 import { toast } from 'sonner';
 
 export default function ExamsList() {
@@ -135,6 +135,12 @@ export default function ExamsList() {
                     >
                       <Copy className="mr-1 h-4 w-4" />
                       Copy Link
+                    </Button>
+                    <Button variant="default" size="sm" asChild disabled={!exam.is_published}>
+                      <Link to={`/exam/${exam.id}`}>
+                        <Play className="mr-1 h-4 w-4" />
+                        Start Exam
+                      </Link>
                     </Button>
                     <Button variant="outline" size="sm" asChild disabled={!exam.is_published}>
                       <a href={`/exam/${exam.id}`} target="_blank" rel="noopener noreferrer">
