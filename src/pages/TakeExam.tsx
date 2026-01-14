@@ -21,7 +21,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Exam, Question, ExamAttempt } from '@/types/exam';
 import { toast } from 'sonner';
-import { Loader2, CheckCircle, AlertCircle, Lightbulb, ChevronDown, CheckCircle2, XCircle, Circle } from 'lucide-react';
+import { Loader2, CheckCircle, AlertCircle, Lightbulb, ChevronDown, CheckCircle2, XCircle, ArrowLeft, FileText, Edit2 } from 'lucide-react';
 import { Progress } from '@/components/ui/progress';
 
 export default function TakeExam() {
@@ -38,6 +38,7 @@ export default function TakeExam() {
   const [score, setScore] = useState<number | null>(null);
   const [openExplanations, setOpenExplanations] = useState<Record<string, boolean>>({});
   const [showSubmitDialog, setShowSubmitDialog] = useState(false);
+  const [showSummary, setShowSummary] = useState(false);
 
   // Student info
   const [studentName, setStudentName] = useState('');
@@ -365,10 +366,21 @@ export default function TakeExam() {
   };
 
   const handleSubmitClick = () => {
+    setShowSummary(true);
+  };
+
+  const handleFinalSubmit = () => {
     if (unansweredCount > 0) {
       setShowSubmitDialog(true);
     } else {
       submitExam();
+    }
+  };
+
+  const goBackToExam = (questionId?: string) => {
+    setShowSummary(false);
+    if (questionId) {
+      setTimeout(() => scrollToQuestion(questionId), 100);
     }
   };
 
@@ -387,11 +399,8 @@ export default function TakeExam() {
                 />
               )}
               <Button onClick={handleSubmitClick} disabled={submitting}>
-                {submitting ? (
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                ) : (
-                  'Submit Exam'
-                )}
+                <FileText className="mr-2 h-4 w-4" />
+                Review & Submit
               </Button>
             </div>
           </div>
@@ -430,87 +439,193 @@ export default function TakeExam() {
         </div>
       </header>
 
-      <main className="container py-8">
-        <div className="mx-auto max-w-3xl space-y-6">
-          {questions.map((question, index) => (
-            <Card key={question.id} id={`question-${question.id}`} className="question-card scroll-mt-48">
+      {showSummary ? (
+        /* Summary View */
+        <main className="container py-8">
+          <div className="mx-auto max-w-3xl space-y-6">
+            <Card className="border-2 border-primary/20">
               <CardHeader>
-                <CardTitle className="text-base">
-                  Question {index + 1} of {questions.length}
+                <CardTitle className="flex items-center gap-2">
+                  <FileText className="h-5 w-5 text-primary" />
+                  Review Your Answers
                 </CardTitle>
+                <CardDescription>
+                  Review all your answers before submitting. Click on any question to edit your answer.
+                </CardDescription>
               </CardHeader>
-              <CardContent className="space-y-4">
-                <p className="text-lg">{question.question_text}</p>
-
-                {question.image_url && (
-                  <img
-                    src={question.image_url}
-                    alt="Question"
-                    className="max-h-64 rounded-lg object-contain"
-                  />
-                )}
-
-                {question.question_type === 'multiple_choice' && (
-                  <RadioGroup
-                    value={answers[question.id!] || ''}
-                    onValueChange={(value) =>
-                      setAnswers({ ...answers, [question.id!]: value })
-                    }
-                  >
-                    {(question.options || []).map((option, optIndex) => (
-                      <div key={optIndex} className="flex items-center space-x-2">
-                        <RadioGroupItem value={option} id={`${question.id}-${optIndex}`} />
-                        <Label htmlFor={`${question.id}-${optIndex}`}>{option}</Label>
-                      </div>
-                    ))}
-                  </RadioGroup>
-                )}
-
-                {question.question_type === 'true_false' && (
-                  <RadioGroup
-                    value={answers[question.id!] || ''}
-                    onValueChange={(value) =>
-                      setAnswers({ ...answers, [question.id!]: value })
-                    }
-                  >
-                    <div className="flex items-center space-x-2">
-                      <RadioGroupItem value="True" id={`${question.id}-true`} />
-                      <Label htmlFor={`${question.id}-true`}>True</Label>
+              <CardContent>
+                <div className="mb-4 flex items-center justify-between rounded-lg bg-muted p-4">
+                  <div>
+                    <p className="text-sm text-muted-foreground">Total Answered</p>
+                    <p className="text-2xl font-bold text-primary">{answeredCount}/{questions.length}</p>
+                  </div>
+                  {unansweredCount > 0 && (
+                    <div className="rounded-lg bg-yellow-100 px-3 py-2 dark:bg-yellow-900/30">
+                      <p className="text-sm font-medium text-yellow-800 dark:text-yellow-200">
+                        {unansweredCount} unanswered
+                      </p>
                     </div>
-                    <div className="flex items-center space-x-2">
-                      <RadioGroupItem value="False" id={`${question.id}-false`} />
-                      <Label htmlFor={`${question.id}-false`}>False</Label>
-                    </div>
-                  </RadioGroup>
-                )}
-
-                {question.question_type === 'short_answer' && (
-                  <Textarea
-                    value={answers[question.id!] || ''}
-                    onChange={(e) =>
-                      setAnswers({ ...answers, [question.id!]: e.target.value })
-                    }
-                    placeholder="Type your answer here..."
-                  />
-                )}
+                  )}
+                </div>
               </CardContent>
             </Card>
-          ))}
 
-          <div className="flex justify-end">
-            <Button onClick={handleSubmitClick} size="lg" disabled={submitting}>
-              {submitting ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Submitting...
-                </>
-              ) : (
-                'Submit Exam'
-              )}
-            </Button>
+            <div className="space-y-3">
+              {questions.map((question, index) => {
+                const answer = answers[question.id!];
+                const isAnswered = answer?.trim();
+                
+                return (
+                  <Card 
+                    key={question.id}
+                    className={`cursor-pointer transition-all hover:shadow-md ${
+                      isAnswered 
+                        ? 'border-green-200 bg-green-50/50 dark:border-green-800/30 dark:bg-green-950/20' 
+                        : 'border-yellow-200 bg-yellow-50/50 dark:border-yellow-800/30 dark:bg-yellow-950/20'
+                    }`}
+                    onClick={() => goBackToExam(question.id!)}
+                  >
+                    <CardContent className="p-4">
+                      <div className="flex items-start justify-between gap-4">
+                        <div className="flex-1 space-y-2">
+                          <div className="flex items-center gap-2">
+                            <span className={`flex h-6 w-6 items-center justify-center rounded-full text-xs font-medium ${
+                              isAnswered 
+                                ? 'bg-green-500 text-white' 
+                                : 'bg-yellow-500 text-white'
+                            }`}>
+                              {index + 1}
+                            </span>
+                            <span className="text-sm font-medium text-muted-foreground">
+                              {question.question_type === 'multiple_choice' ? 'Multiple Choice' :
+                               question.question_type === 'true_false' ? 'True/False' : 'Short Answer'}
+                            </span>
+                            {isAnswered ? (
+                              <CheckCircle2 className="h-4 w-4 text-green-600" />
+                            ) : (
+                              <AlertCircle className="h-4 w-4 text-yellow-600" />
+                            )}
+                          </div>
+                          <p className="line-clamp-2 text-sm">{question.question_text}</p>
+                          <div className="pt-1">
+                            <p className="text-sm">
+                              <span className="text-muted-foreground">Your answer: </span>
+                              {isAnswered ? (
+                                <span className="font-medium text-green-700 dark:text-green-400">
+                                  {answer.length > 100 ? answer.substring(0, 100) + '...' : answer}
+                                </span>
+                              ) : (
+                                <span className="italic text-yellow-600 dark:text-yellow-400">Not answered</span>
+                              )}
+                            </p>
+                          </div>
+                        </div>
+                        <Button variant="ghost" size="sm" className="shrink-0">
+                          <Edit2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </CardContent>
+                  </Card>
+                );
+              })}
+            </div>
+
+            <div className="flex items-center justify-between gap-4 pt-4">
+              <Button variant="outline" onClick={() => setShowSummary(false)}>
+                <ArrowLeft className="mr-2 h-4 w-4" />
+                Back to Exam
+              </Button>
+              <Button onClick={handleFinalSubmit} size="lg" disabled={submitting}>
+                {submitting ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Submitting...
+                  </>
+                ) : (
+                  'Submit Exam'
+                )}
+              </Button>
+            </div>
           </div>
-        </div>
-      </main>
+        </main>
+      ) : (
+        /* Questions View */
+        <main className="container py-8">
+          <div className="mx-auto max-w-3xl space-y-6">
+            {questions.map((question, index) => (
+              <Card key={question.id} id={`question-${question.id}`} className="question-card scroll-mt-48">
+                <CardHeader>
+                  <CardTitle className="text-base">
+                    Question {index + 1} of {questions.length}
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <p className="text-lg">{question.question_text}</p>
+
+                  {question.image_url && (
+                    <img
+                      src={question.image_url}
+                      alt="Question"
+                      className="max-h-64 rounded-lg object-contain"
+                    />
+                  )}
+
+                  {question.question_type === 'multiple_choice' && (
+                    <RadioGroup
+                      value={answers[question.id!] || ''}
+                      onValueChange={(value) =>
+                        setAnswers({ ...answers, [question.id!]: value })
+                      }
+                    >
+                      {(question.options || []).map((option, optIndex) => (
+                        <div key={optIndex} className="flex items-center space-x-2">
+                          <RadioGroupItem value={option} id={`${question.id}-${optIndex}`} />
+                          <Label htmlFor={`${question.id}-${optIndex}`}>{option}</Label>
+                        </div>
+                      ))}
+                    </RadioGroup>
+                  )}
+
+                  {question.question_type === 'true_false' && (
+                    <RadioGroup
+                      value={answers[question.id!] || ''}
+                      onValueChange={(value) =>
+                        setAnswers({ ...answers, [question.id!]: value })
+                      }
+                    >
+                      <div className="flex items-center space-x-2">
+                        <RadioGroupItem value="True" id={`${question.id}-true`} />
+                        <Label htmlFor={`${question.id}-true`}>True</Label>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <RadioGroupItem value="False" id={`${question.id}-false`} />
+                        <Label htmlFor={`${question.id}-false`}>False</Label>
+                      </div>
+                    </RadioGroup>
+                  )}
+
+                  {question.question_type === 'short_answer' && (
+                    <Textarea
+                      value={answers[question.id!] || ''}
+                      onChange={(e) =>
+                        setAnswers({ ...answers, [question.id!]: e.target.value })
+                      }
+                      placeholder="Type your answer here..."
+                    />
+                  )}
+                </CardContent>
+              </Card>
+            ))}
+
+            <div className="flex justify-end">
+              <Button onClick={handleSubmitClick} size="lg">
+                <FileText className="mr-2 h-4 w-4" />
+                Review & Submit
+              </Button>
+            </div>
+          </div>
+        </main>
+      )}
 
       {/* Confirmation Dialog for Unanswered Questions */}
       <AlertDialog open={showSubmitDialog} onOpenChange={setShowSubmitDialog}>
@@ -526,8 +641,8 @@ export default function TakeExam() {
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Review Answers</AlertDialogCancel>
-            <AlertDialogAction onClick={submitExam}>
+            <AlertDialogCancel onClick={() => setShowSubmitDialog(false)}>Review Answers</AlertDialogCancel>
+            <AlertDialogAction onClick={() => { setShowSubmitDialog(false); submitExam(); }}>
               Submit Anyway
             </AlertDialogAction>
           </AlertDialogFooter>
