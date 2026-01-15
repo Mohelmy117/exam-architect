@@ -6,10 +6,45 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Loader2, FileText, Upload, X } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
+import * as pdfjsLib from 'pdfjs-dist';
+import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
+
+(pdfjsLib as any).GlobalWorkerOptions.workerSrc = pdfjsWorker;
 
 interface PDFExamParserProps {
   onQuestionsGenerated: (questions: Question[]) => void;
 }
+
+async function extractTextWithPdfJs(file: File): Promise<string> {
+  const arrayBuffer = await file.arrayBuffer();
+  const pdf = await (pdfjsLib as any).getDocument({ data: arrayBuffer }).promise;
+
+  let fullText = '';
+  for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+    const page = await pdf.getPage(pageNum);
+    const content = await page.getTextContent();
+    const pageText = content.items
+      .map((item: any) => ('str' in item ? item.str : ''))
+      .filter(Boolean)
+      .join(' ');
+
+    fullText += `${pageText}\n\n`;
+  }
+
+  return fullText.trim();
+}
+
+const fileToBase64 = (file: File): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.readAsDataURL(file);
+    reader.onload = () => {
+      const result = reader.result as string;
+      resolve(result.split(',')[1]);
+    };
+    reader.onerror = reject;
+  });
+};
 
 export function PDFExamParser({ onQuestionsGenerated }: PDFExamParserProps) {
   const [questionsPdf, setQuestionsPdf] = useState<File | null>(null);
@@ -17,18 +52,6 @@ export function PDFExamParser({ onQuestionsGenerated }: PDFExamParserProps) {
   const [loading, setLoading] = useState(false);
   const questionsInputRef = useRef<HTMLInputElement>(null);
   const solutionsInputRef = useRef<HTMLInputElement>(null);
-
-  const fileToBase64 = (file: File): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.readAsDataURL(file);
-      reader.onload = () => {
-        const result = reader.result as string;
-        resolve(result.split(',')[1]);
-      };
-      reader.onerror = reject;
-    });
-  };
 
   const parsePDFs = async () => {
     if (!questionsPdf) {
@@ -38,16 +61,29 @@ export function PDFExamParser({ onQuestionsGenerated }: PDFExamParserProps) {
 
     setLoading(true);
     try {
-      const questionsBase64 = await fileToBase64(questionsPdf);
-      const solutionsBase64 = solutionsPdf ? await fileToBase64(solutionsPdf) : null;
+      // Prefer robust client-side text extraction (works for most text PDFs)
+      let questionsText = '';
+      let solutionsText: string | null = null;
 
-      const { data, error } = await supabase.functions.invoke('parse-pdf-exam', {
-        body: {
-          questionsPdf: questionsBase64,
-          solutionsPdf: solutionsBase64,
-          hasSeparateSolutions: !!solutionsPdf,
-        },
-      });
+      try {
+        questionsText = await extractTextWithPdfJs(questionsPdf);
+        solutionsText = solutionsPdf ? await extractTextWithPdfJs(solutionsPdf) : null;
+      } catch (e) {
+        console.warn('PDF.js extraction failed, falling back to base64 upload:', e);
+      }
+
+      const body: any = {
+        hasSeparateSolutions: !!solutionsPdf,
+      };
+
+      if (questionsText) body.questionsText = questionsText;
+      if (solutionsText) body.solutionsText = solutionsText;
+
+      // Fallback for image-based/protected PDFs (server will try best-effort extraction)
+      if (!questionsText) body.questionsPdf = await fileToBase64(questionsPdf);
+      if (solutionsPdf && !solutionsText) body.solutionsPdf = await fileToBase64(solutionsPdf);
+
+      const { data, error } = await supabase.functions.invoke('parse-pdf-exam', { body });
 
       if (error) throw error;
 

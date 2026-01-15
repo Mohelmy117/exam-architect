@@ -114,10 +114,10 @@ Deno.serve(async (req) => {
       });
     }
 
-    const { questionsPdf, solutionsPdf, hasSeparateSolutions } = await req.json();
+    const { questionsPdf, solutionsPdf, hasSeparateSolutions, questionsText: questionsTextFromClient, solutionsText: solutionsTextFromClient } = await req.json();
 
-    if (!questionsPdf) {
-      return new Response(JSON.stringify({ error: "Questions PDF is required" }), {
+    if (!questionsPdf && !questionsTextFromClient) {
+      return new Response(JSON.stringify({ error: "Questions PDF or extracted questions text is required" }), {
         status: 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -125,14 +125,26 @@ Deno.serve(async (req) => {
 
     console.log("Parsing PDF exam...", hasSeparateSolutions ? "with separate solutions" : "single PDF");
 
-    // Extract text from PDFs
-    const questionsText = await extractTextFromPdf(questionsPdf);
+    // Prefer client-extracted text (more reliable than server-side PDF byte heuristics)
+    const questionsText = questionsTextFromClient
+      ? String(questionsTextFromClient)
+      : await extractTextFromPdf(questionsPdf);
+
+    console.log(`Questions text length: ${questionsText.length}`);
     console.log("Questions text preview:", questionsText.substring(0, 500));
-    
+
     let solutionsText = "";
-    if (hasSeparateSolutions && solutionsPdf) {
-      solutionsText = await extractTextFromPdf(solutionsPdf);
-      console.log("Solutions text preview:", solutionsText.substring(0, 500));
+    if (hasSeparateSolutions) {
+      if (solutionsTextFromClient) {
+        solutionsText = String(solutionsTextFromClient);
+      } else if (solutionsPdf) {
+        solutionsText = await extractTextFromPdf(solutionsPdf);
+      }
+
+      if (solutionsText) {
+        console.log(`Solutions text length: ${solutionsText.length}`);
+        console.log("Solutions text preview:", solutionsText.substring(0, 500));
+      }
     }
 
     // Build the prompt for text-based parsing
