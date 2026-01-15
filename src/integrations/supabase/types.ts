@@ -20,6 +20,7 @@ export type Database = {
           exam_id: string
           id: string
           score: number | null
+          session_id: string | null
           started_at: string
           student_email: string | null
           student_name: string | null
@@ -30,6 +31,7 @@ export type Database = {
           exam_id: string
           id?: string
           score?: number | null
+          session_id?: string | null
           started_at?: string
           student_email?: string | null
           student_name?: string | null
@@ -40,6 +42,7 @@ export type Database = {
           exam_id?: string
           id?: string
           score?: number | null
+          session_id?: string | null
           started_at?: string
           student_email?: string | null
           student_name?: string | null
@@ -170,10 +173,69 @@ export type Database = {
       }
     }
     Views: {
-      [_ in never]: never
+      student_exam_questions: {
+        Row: {
+          created_at: string | null
+          exam_id: string | null
+          id: string | null
+          image_url: string | null
+          options: Json | null
+          order_index: number | null
+          question_text: string | null
+          question_type: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          exam_id?: string | null
+          id?: string | null
+          image_url?: string | null
+          options?: Json | null
+          order_index?: number | null
+          question_text?: string | null
+          question_type?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          exam_id?: string | null
+          id?: string | null
+          image_url?: string | null
+          options?: Json | null
+          order_index?: number | null
+          question_text?: string | null
+          question_type?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "questions_exam_id_fkey"
+            columns: ["exam_id"]
+            isOneToOne: false
+            referencedRelation: "exams"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Functions: {
-      [_ in never]: never
+      start_exam_attempt: {
+        Args: {
+          p_exam_id: string
+          p_session_id: string
+          p_student_email?: string
+          p_student_name?: string
+        }
+        Returns: {
+          attempt_id: string
+          started_at: string
+        }[]
+      }
+      submit_exam_attempt: {
+        Args: { p_answers: Json; p_attempt_id: string; p_session_id: string }
+        Returns: {
+          correct_count: number
+          score: number
+          total_count: number
+        }[]
+      }
     }
     Enums: {
       [_ in never]: never
