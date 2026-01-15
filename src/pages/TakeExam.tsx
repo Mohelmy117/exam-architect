@@ -24,18 +24,43 @@ import { toast } from 'sonner';
 import { Loader2, CheckCircle, AlertCircle, Lightbulb, ChevronDown, CheckCircle2, XCircle, ArrowLeft, FileText, Edit2 } from 'lucide-react';
 import { Progress } from '@/components/ui/progress';
 
+// Generate or retrieve session ID for anonymous tracking
+const getSessionId = (): string => {
+  let sessionId = sessionStorage.getItem('exam_session_id');
+  if (!sessionId) {
+    sessionId = crypto.randomUUID();
+    sessionStorage.setItem('exam_session_id', sessionId);
+  }
+  return sessionId;
+};
+
+// Type for questions during exam (without answers)
+interface StudentQuestion {
+  id: string;
+  exam_id: string;
+  question_text: string;
+  question_type: string;
+  options: string[];
+  image_url: string | null;
+  order_index: number;
+  created_at: string;
+}
+
 export default function TakeExam() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [exam, setExam] = useState<Exam | null>(null);
-  const [questions, setQuestions] = useState<Question[]>([]);
+  const [questions, setQuestions] = useState<StudentQuestion[]>([]);
+  const [fullQuestions, setFullQuestions] = useState<Question[]>([]); // For results view
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [attemptId, setAttemptId] = useState<string | null>(null);
+  const [sessionId] = useState<string>(getSessionId);
   const [startedAt, setStartedAt] = useState<Date | null>(null);
   const [submitted, setSubmitted] = useState(false);
   const [score, setScore] = useState<number | null>(null);
+  const [correctCount, setCorrectCount] = useState<number>(0);
   const [openExplanations, setOpenExplanations] = useState<Record<string, boolean>>({});
   const [showSubmitDialog, setShowSubmitDialog] = useState(false);
   const [showSummary, setShowSummary] = useState(false);
@@ -49,9 +74,10 @@ export default function TakeExam() {
     const fetchExam = async () => {
       if (!id) return;
 
+      // Fetch exam and questions from the secure view (without correct answers)
       const [examRes, questionsRes] = await Promise.all([
         supabase.from('exams').select('*').eq('id', id).eq('is_published', true).single(),
-        supabase.from('questions').select('*').eq('exam_id', id).order('order_index'),
+        supabase.from('student_exam_questions').select('*').eq('exam_id', id).order('order_index'),
       ]);
 
       if (examRes.error || !examRes.data) {
@@ -66,7 +92,7 @@ export default function TakeExam() {
         const mapped = questionsRes.data.map((q) => ({
           ...q,
           options: Array.isArray(q.options) ? q.options : [],
-        })) as Question[];
+        })) as StudentQuestion[];
         setQuestions(mapped);
       }
 
@@ -79,24 +105,22 @@ export default function TakeExam() {
   const startExam = async () => {
     if (!exam) return;
 
-    const { data, error } = await supabase
-      .from('exam_attempts')
-      .insert({
-        exam_id: exam.id,
-        student_name: studentName,
-        student_email: studentEmail,
-        answers: {},
-      })
-      .select()
-      .single();
+    // Use secure RPC function to start exam
+    const { data, error } = await supabase.rpc('start_exam_attempt', {
+      p_exam_id: exam.id,
+      p_session_id: sessionId,
+      p_student_name: studentName || null,
+      p_student_email: studentEmail || null,
+    });
 
-    if (error) {
+    if (error || !data || data.length === 0) {
       toast.error('Failed to start exam');
+      console.error('Start exam error:', error);
       return;
     }
 
-    setAttemptId(data.id);
-    setStartedAt(new Date(data.started_at));
+    setAttemptId(data[0].attempt_id);
+    setStartedAt(new Date(data[0].started_at));
     setStarted(true);
   };
 
@@ -105,35 +129,41 @@ export default function TakeExam() {
 
     setSubmitting(true);
 
-    // Calculate score
-    let correct = 0;
-    questions.forEach((q) => {
-      if (answers[q.id!] === q.correct_answer) {
-        correct++;
-      }
+    // Use secure RPC function to submit exam - score calculated server-side
+    const { data, error } = await supabase.rpc('submit_exam_attempt', {
+      p_attempt_id: attemptId,
+      p_session_id: sessionId,
+      p_answers: answers,
     });
 
-    const calculatedScore = Math.round((correct / questions.length) * 100);
-
-    const { error } = await supabase
-      .from('exam_attempts')
-      .update({
-        answers,
-        score: calculatedScore,
-        submitted_at: new Date().toISOString(),
-      })
-      .eq('id', attemptId);
-
-    if (error) {
+    if (error || !data || data.length === 0) {
       toast.error('Failed to submit exam');
+      console.error('Submit exam error:', error);
       setSubmitting(false);
       return;
     }
 
-    setScore(calculatedScore);
+    const result = data[0];
+    setScore(result.score);
+    setCorrectCount(result.correct_count);
+
+    // Now fetch full question data for results view (including correct answers)
+    const { data: fullQuestionData } = await supabase
+      .from('questions')
+      .select('*')
+      .eq('exam_id', exam?.id)
+      .order('order_index');
+
+    if (fullQuestionData) {
+      setFullQuestions(fullQuestionData.map((q) => ({
+        ...q,
+        options: Array.isArray(q.options) ? q.options : [],
+      })) as Question[]);
+    }
+
     setSubmitted(true);
     setSubmitting(false);
-  }, [attemptId, answers, questions, submitting]);
+  }, [attemptId, answers, submitting, sessionId, exam?.id]);
 
   const handleTimeUp = useCallback(() => {
     toast.warning('Time is up! Submitting your exam...');
@@ -203,15 +233,15 @@ export default function TakeExam() {
                   <div className="text-center">
                     <p className="text-sm text-muted-foreground">Correct</p>
                     <p className="text-3xl font-bold">
-                      {questions.filter(q => isCorrect(q.id!, q.correct_answer)).length}/{questions.length}
+                      {correctCount}/{fullQuestions.length}
                     </p>
                   </div>
                 </div>
               </CardContent>
             </Card>
 
-            {questions.map((question, index) => {
-              const correct = isCorrect(question.id!, question.correct_answer);
+            {fullQuestions.map((question, index) => {
+              const correct = isCorrect(question.id!, question.correct_answer || '');
               const hasExplanation = question.explanation || question.solution;
               
               return (
