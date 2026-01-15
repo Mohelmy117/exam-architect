@@ -1,3 +1,4 @@
+import "https://deno.land/x/xhr@0.1.0/mod.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
 const corsHeaders = {
@@ -13,6 +14,76 @@ interface Question {
   solution?: string;
   explanation?: string;
   order_index: number;
+}
+
+// Simple PDF text extraction from base64
+async function extractTextFromPdf(base64Pdf: string): Promise<string> {
+  try {
+    // Decode base64 to binary
+    const binaryString = atob(base64Pdf);
+    const bytes = new Uint8Array(binaryString.length);
+    for (let i = 0; i < binaryString.length; i++) {
+      bytes[i] = binaryString.charCodeAt(i);
+    }
+    
+    // Convert to string and extract readable text
+    const pdfContent = new TextDecoder('utf-8', { fatal: false }).decode(bytes);
+    
+    // Extract text from PDF streams and objects
+    const textParts: string[] = [];
+    
+    // Method 1: Extract from text streams (BT...ET blocks)
+    const btEtPattern = /BT\s*([\s\S]*?)\s*ET/g;
+    let btMatch;
+    while ((btMatch = btEtPattern.exec(pdfContent)) !== null) {
+      const block = btMatch[1];
+      // Extract text from Tj and TJ operators
+      const tjPattern = /\(([^)]*)\)\s*Tj/g;
+      let tjMatch;
+      while ((tjMatch = tjPattern.exec(block)) !== null) {
+        if (tjMatch[1].trim()) {
+          textParts.push(tjMatch[1]);
+        }
+      }
+      // Extract from TJ arrays
+      const tjArrayPattern = /\[([^\]]+)\]\s*TJ/g;
+      let tjArrMatch;
+      while ((tjArrMatch = tjArrayPattern.exec(block)) !== null) {
+        const arr = tjArrMatch[1];
+        const strings = arr.match(/\(([^)]*)\)/g);
+        if (strings) {
+          strings.forEach(s => {
+            const text = s.slice(1, -1).trim();
+            if (text) textParts.push(text);
+          });
+        }
+      }
+    }
+    
+    // Method 2: Extract readable strings (fallback)
+    if (textParts.length < 5) {
+      // Find sequences of printable characters
+      const readablePattern = /[\x20-\x7E\n\r\t]{20,}/g;
+      let readableMatch;
+      while ((readableMatch = readablePattern.exec(pdfContent)) !== null) {
+        const text = readableMatch[0].trim();
+        // Filter out PDF syntax
+        if (!text.includes('/Type') && !text.includes('/Font') && 
+            !text.includes('stream') && !text.includes('endstream') &&
+            !text.match(/^\d+ \d+ obj/) && !text.includes('xref')) {
+          textParts.push(text);
+        }
+      }
+    }
+    
+    const extractedText = textParts.join(' ').replace(/\s+/g, ' ').trim();
+    console.log(`Extracted ${extractedText.length} characters from PDF`);
+    
+    return extractedText || "Unable to extract text from PDF. The PDF may be image-based.";
+  } catch (error) {
+    console.error("PDF extraction error:", error);
+    return "Error extracting PDF content";
+  }
 }
 
 Deno.serve(async (req) => {
@@ -54,12 +125,19 @@ Deno.serve(async (req) => {
 
     console.log("Parsing PDF exam...", hasSeparateSolutions ? "with separate solutions" : "single PDF");
 
-    // Build the messages array with PDF as inline data for vision model
-    const messages: any[] = [
-      {
-        role: "system",
-        content: `You are an expert exam parser and educational content creator. Your task is to:
-1. Extract all questions from the PDF document exactly as they appear
+    // Extract text from PDFs
+    const questionsText = await extractTextFromPdf(questionsPdf);
+    console.log("Questions text preview:", questionsText.substring(0, 500));
+    
+    let solutionsText = "";
+    if (hasSeparateSolutions && solutionsPdf) {
+      solutionsText = await extractTextFromPdf(solutionsPdf);
+      console.log("Solutions text preview:", solutionsText.substring(0, 500));
+    }
+
+    // Build the prompt for text-based parsing
+    const systemPrompt = `You are an expert exam parser and educational content creator. Your task is to:
+1. Extract all questions from the provided text exactly as they appear
 2. Identify the question type (multiple_choice, true_false, or short_answer)
 3. Extract all answer options for multiple choice questions
 4. Identify the correct answer from the solutions provided
@@ -70,56 +148,38 @@ Deno.serve(async (req) => {
    - The key concepts being tested
    - Any helpful tips or mnemonics
 
-IMPORTANT: Return ONLY valid JSON array, no other text. Each question object must have:
+CRITICAL: Return ONLY a valid JSON array with NO additional text, markdown, or formatting.
+Each question object must have:
 - question_text: string (the full question)
 - question_type: "multiple_choice" | "true_false" | "short_answer"
 - options: string[] (for multiple choice, without A/B/C/D prefixes)
-- correct_answer: string (the correct answer text)
+- correct_answer: string (the correct answer text, not the letter)
 - solution: string (the original solution from PDF if available, or empty string)
-- explanation: string (your AI-generated educational explanation)`
-      }
-    ];
+- explanation: string (your AI-generated educational explanation)
 
-    // Add the PDF content as base64 for vision processing
-    if (hasSeparateSolutions && solutionsPdf) {
-      messages.push({
-        role: "user",
-        content: [
-          {
-            type: "text",
-            text: "I'm providing two PDFs - the first is the exam questions, the second is the solutions. Extract all questions, match them with solutions, and generate helpful explanations."
-          },
-          {
-            type: "image_url",
-            image_url: {
-              url: `data:application/pdf;base64,${questionsPdf}`
-            }
-          },
-          {
-            type: "image_url",
-            image_url: {
-              url: `data:application/pdf;base64,${solutionsPdf}`
-            }
-          }
-        ]
-      });
+Example output format:
+[{"question_text":"What is 2+2?","question_type":"multiple_choice","options":["3","4","5","6"],"correct_answer":"4","solution":"","explanation":"2+2=4 because..."}]`;
+
+    let userPrompt = "";
+    if (hasSeparateSolutions && solutionsText) {
+      userPrompt = `Here is the exam questions text:
+
+${questionsText}
+
+And here are the solutions:
+
+${solutionsText}
+
+Please extract all questions, match them with their solutions, and generate helpful explanations. Return ONLY the JSON array.`;
     } else {
-      messages.push({
-        role: "user",
-        content: [
-          {
-            type: "text",
-            text: "Extract all questions from this PDF. If solutions are included, use them. Generate helpful educational explanations for each question."
-          },
-          {
-            type: "image_url",
-            image_url: {
-              url: `data:application/pdf;base64,${questionsPdf}`
-            }
-          }
-        ]
-      });
+      userPrompt = `Here is the exam text (may include both questions and solutions):
+
+${questionsText}
+
+Please extract all questions and their solutions (if included), and generate helpful educational explanations for each. Return ONLY the JSON array.`;
     }
+
+    console.log("Sending to AI for parsing...");
 
     const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
@@ -128,38 +188,63 @@ IMPORTANT: Return ONLY valid JSON array, no other text. Each question object mus
         "Authorization": `Bearer ${Deno.env.get("LOVABLE_API_KEY")}`,
       },
       body: JSON.stringify({
-        model: "google/gemini-2.5-pro",
-        messages,
+        model: "google/gemini-2.5-flash",
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt }
+        ],
         temperature: 0.3,
       }),
     });
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error("AI API error:", errorText);
-      throw new Error("Failed to parse PDF");
+      console.error("AI API error:", response.status, errorText);
+      throw new Error(`AI API error: ${response.status}`);
     }
 
     const aiResponse = await response.json();
     const content = aiResponse.choices?.[0]?.message?.content || "";
 
-    console.log("AI response received, parsing JSON...");
+    console.log("AI response received, length:", content.length);
+    console.log("AI response preview:", content.substring(0, 500));
 
     // Parse the JSON from the response
     let questions: Question[] = [];
     try {
+      // Clean up the response - remove markdown code blocks if present
+      let cleanContent = content.trim();
+      if (cleanContent.startsWith("```json")) {
+        cleanContent = cleanContent.slice(7);
+      } else if (cleanContent.startsWith("```")) {
+        cleanContent = cleanContent.slice(3);
+      }
+      if (cleanContent.endsWith("```")) {
+        cleanContent = cleanContent.slice(0, -3);
+      }
+      cleanContent = cleanContent.trim();
+
       // Try to find JSON array in the response
-      const jsonMatch = content.match(/\[[\s\S]*\]/);
+      const jsonMatch = cleanContent.match(/\[[\s\S]*\]/);
       if (jsonMatch) {
         questions = JSON.parse(jsonMatch[0]);
       } else {
         // Try parsing the whole content as JSON
-        questions = JSON.parse(content);
+        questions = JSON.parse(cleanContent);
       }
     } catch (parseError) {
       console.error("Failed to parse AI response:", parseError);
-      console.log("Raw content:", content.substring(0, 1000));
-      throw new Error("Failed to parse questions from PDF");
+      console.log("Raw content:", content.substring(0, 2000));
+      
+      // If no questions could be parsed, return a helpful error
+      if (questionsText.length < 50 || questionsText.includes("Unable to extract")) {
+        throw new Error("Could not extract text from PDF. The PDF may be image-based or protected. Please try a different PDF or manually enter questions.");
+      }
+      throw new Error("Failed to parse questions from the PDF content. Please try again.");
+    }
+
+    if (!Array.isArray(questions) || questions.length === 0) {
+      throw new Error("No questions found in the PDF. Please ensure the PDF contains exam questions.");
     }
 
     // Add order_index and ensure all fields exist
