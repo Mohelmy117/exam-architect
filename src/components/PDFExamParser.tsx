@@ -1,7 +1,8 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { Question } from '@/types/exam';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
+import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Loader2, FileText, Upload, X } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
@@ -15,12 +16,30 @@ interface PDFExamParserProps {
   onQuestionsGenerated: (questions: Question[]) => void;
 }
 
-async function extractTextWithPdfJs(file: File): Promise<string> {
+interface PageRange {
+  start: number;
+  end: number;
+}
+
+async function getPdfPageCount(file: File): Promise<number> {
+  const arrayBuffer = await file.arrayBuffer();
+  const pdf = await (pdfjsLib as any).getDocument({ data: arrayBuffer }).promise;
+  return pdf.numPages;
+}
+
+async function extractTextWithPdfJs(
+  file: File,
+  startPage?: number,
+  endPage?: number
+): Promise<string> {
   const arrayBuffer = await file.arrayBuffer();
   const pdf = await (pdfjsLib as any).getDocument({ data: arrayBuffer }).promise;
 
+  const start = startPage || 1;
+  const end = endPage || pdf.numPages;
+
   let fullText = '';
-  for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+  for (let pageNum = start; pageNum <= end; pageNum++) {
     const page = await pdf.getPage(pageNum);
     const content = await page.getTextContent();
     const pageText = content.items
@@ -50,12 +69,86 @@ export function PDFExamParser({ onQuestionsGenerated }: PDFExamParserProps) {
   const [questionsPdf, setQuestionsPdf] = useState<File | null>(null);
   const [solutionsPdf, setSolutionsPdf] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
+  const [questionsTotalPages, setQuestionsTotalPages] = useState<number | null>(null);
+  const [solutionsTotalPages, setSolutionsTotalPages] = useState<number | null>(null);
+  const [questionsPageRange, setQuestionsPageRange] = useState<PageRange | null>(null);
+  const [solutionsPageRange, setSolutionsPageRange] = useState<PageRange | null>(null);
   const questionsInputRef = useRef<HTMLInputElement>(null);
   const solutionsInputRef = useRef<HTMLInputElement>(null);
+
+  // Detect page count when questions PDF is uploaded
+  useEffect(() => {
+    if (questionsPdf) {
+      getPdfPageCount(questionsPdf)
+        .then((count) => {
+          setQuestionsTotalPages(count);
+          setQuestionsPageRange({ start: 1, end: count });
+        })
+        .catch((err) => {
+          console.warn('Failed to get page count:', err);
+          setQuestionsTotalPages(null);
+          setQuestionsPageRange(null);
+        });
+    } else {
+      setQuestionsTotalPages(null);
+      setQuestionsPageRange(null);
+    }
+  }, [questionsPdf]);
+
+  // Detect page count when solutions PDF is uploaded
+  useEffect(() => {
+    if (solutionsPdf) {
+      getPdfPageCount(solutionsPdf)
+        .then((count) => {
+          setSolutionsTotalPages(count);
+          setSolutionsPageRange({ start: 1, end: count });
+        })
+        .catch((err) => {
+          console.warn('Failed to get page count:', err);
+          setSolutionsTotalPages(null);
+          setSolutionsPageRange(null);
+        });
+    } else {
+      setSolutionsTotalPages(null);
+      setSolutionsPageRange(null);
+    }
+  }, [solutionsPdf]);
+
+  const handleQuestionsPageRangeChange = (field: 'start' | 'end', value: string) => {
+    const numValue = parseInt(value, 10);
+    if (isNaN(numValue) || numValue < 1) return;
+    if (questionsTotalPages && numValue > questionsTotalPages) return;
+
+    setQuestionsPageRange((prev) => ({
+      start: field === 'start' ? numValue : prev?.start || 1,
+      end: field === 'end' ? numValue : prev?.end || questionsTotalPages || 1,
+    }));
+  };
+
+  const handleSolutionsPageRangeChange = (field: 'start' | 'end', value: string) => {
+    const numValue = parseInt(value, 10);
+    if (isNaN(numValue) || numValue < 1) return;
+    if (solutionsTotalPages && numValue > solutionsTotalPages) return;
+
+    setSolutionsPageRange((prev) => ({
+      start: field === 'start' ? numValue : prev?.start || 1,
+      end: field === 'end' ? numValue : prev?.end || solutionsTotalPages || 1,
+    }));
+  };
 
   const parsePDFs = async () => {
     if (!questionsPdf) {
       toast.error('Please upload at least the questions PDF');
+      return;
+    }
+
+    // Validate page ranges
+    if (questionsPageRange && questionsPageRange.start > questionsPageRange.end) {
+      toast.error('Invalid page range for questions PDF');
+      return;
+    }
+    if (solutionsPageRange && solutionsPageRange.start > solutionsPageRange.end) {
+      toast.error('Invalid page range for solutions PDF');
       return;
     }
 
@@ -66,8 +159,18 @@ export function PDFExamParser({ onQuestionsGenerated }: PDFExamParserProps) {
       let solutionsText: string | null = null;
 
       try {
-        questionsText = await extractTextWithPdfJs(questionsPdf);
-        solutionsText = solutionsPdf ? await extractTextWithPdfJs(solutionsPdf) : null;
+        questionsText = await extractTextWithPdfJs(
+          questionsPdf,
+          questionsPageRange?.start,
+          questionsPageRange?.end
+        );
+        solutionsText = solutionsPdf
+          ? await extractTextWithPdfJs(
+              solutionsPdf,
+              solutionsPageRange?.start,
+              solutionsPageRange?.end
+            )
+          : null;
       } catch (e) {
         console.warn('PDF.js extraction failed, falling back to base64 upload:', e);
       }
@@ -143,6 +246,31 @@ export function PDFExamParser({ onQuestionsGenerated }: PDFExamParserProps) {
               </Button>
             )}
           </div>
+
+          {/* Page range selector for questions PDF */}
+          {questionsPdf && questionsTotalPages !== null && questionsTotalPages > 1 && (
+            <div className="flex flex-wrap items-center gap-2 rounded-lg border bg-muted/30 p-3 text-sm">
+              <span className="text-muted-foreground">Parse pages</span>
+              <Input
+                type="number"
+                min={1}
+                max={questionsTotalPages}
+                value={questionsPageRange?.start || 1}
+                onChange={(e) => handleQuestionsPageRangeChange('start', e.target.value)}
+                className="h-8 w-16 text-center"
+              />
+              <span className="text-muted-foreground">to</span>
+              <Input
+                type="number"
+                min={1}
+                max={questionsTotalPages}
+                value={questionsPageRange?.end || questionsTotalPages}
+                onChange={(e) => handleQuestionsPageRangeChange('end', e.target.value)}
+                className="h-8 w-16 text-center"
+              />
+              <span className="text-muted-foreground">of {questionsTotalPages} pages</span>
+            </div>
+          )}
         </div>
 
         <div className="space-y-2">
@@ -173,6 +301,32 @@ export function PDFExamParser({ onQuestionsGenerated }: PDFExamParserProps) {
               </Button>
             )}
           </div>
+
+          {/* Page range selector for solutions PDF */}
+          {solutionsPdf && solutionsTotalPages !== null && solutionsTotalPages > 1 && (
+            <div className="flex flex-wrap items-center gap-2 rounded-lg border bg-muted/30 p-3 text-sm">
+              <span className="text-muted-foreground">Parse pages</span>
+              <Input
+                type="number"
+                min={1}
+                max={solutionsTotalPages}
+                value={solutionsPageRange?.start || 1}
+                onChange={(e) => handleSolutionsPageRangeChange('start', e.target.value)}
+                className="h-8 w-16 text-center"
+              />
+              <span className="text-muted-foreground">to</span>
+              <Input
+                type="number"
+                min={1}
+                max={solutionsTotalPages}
+                value={solutionsPageRange?.end || solutionsTotalPages}
+                onChange={(e) => handleSolutionsPageRangeChange('end', e.target.value)}
+                className="h-8 w-16 text-center"
+              />
+              <span className="text-muted-foreground">of {solutionsTotalPages} pages</span>
+            </div>
+          )}
+
           <p className="text-xs text-muted-foreground">
             If your questions and solutions are in the same PDF, just upload it as the Questions PDF.
           </p>
