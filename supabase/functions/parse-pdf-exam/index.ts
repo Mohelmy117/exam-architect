@@ -114,41 +114,160 @@ Deno.serve(async (req) => {
       });
     }
 
-    const { questionsPdf, solutionsPdf, hasSeparateSolutions, questionsText: questionsTextFromClient, solutionsText: solutionsTextFromClient } = await req.json();
+    const { 
+      questionsPdf, 
+      solutionsPdf, 
+      hasSeparateSolutions, 
+      questionsText: questionsTextFromClient, 
+      solutionsText: solutionsTextFromClient,
+      useOcr,
+      questionsImages,
+      solutionsImages
+    } = await req.json();
 
-    if (!questionsPdf && !questionsTextFromClient) {
-      return new Response(JSON.stringify({ error: "Questions PDF or extracted questions text is required" }), {
+    if (!questionsPdf && !questionsTextFromClient && (!questionsImages || questionsImages.length === 0)) {
+      return new Response(JSON.stringify({ error: "Questions PDF, text, or images are required" }), {
         status: 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    console.log("Parsing PDF exam...", hasSeparateSolutions ? "with separate solutions" : "single PDF");
+    console.log("Parsing PDF exam...", {
+      hasSeparateSolutions,
+      useOcr,
+      hasQuestionsImages: questionsImages?.length > 0,
+      hasSolutionsImages: solutionsImages?.length > 0,
+    });
 
-    // Prefer client-extracted text (more reliable than server-side PDF byte heuristics)
-    const questionsText = questionsTextFromClient
-      ? String(questionsTextFromClient)
-      : await extractTextFromPdf(questionsPdf);
+    let questions: Question[] = [];
 
-    console.log(`Questions text length: ${questionsText.length}`);
-    console.log("Questions text preview:", questionsText.substring(0, 500));
-
-    let solutionsText = "";
-    if (hasSeparateSolutions) {
-      if (solutionsTextFromClient) {
-        solutionsText = String(solutionsTextFromClient);
-      } else if (solutionsPdf) {
-        solutionsText = await extractTextFromPdf(solutionsPdf);
+    if (useOcr && questionsImages && questionsImages.length > 0) {
+      // OCR mode: Use Gemini's vision capabilities
+      console.log(`Processing ${questionsImages.length} question pages with OCR`);
+      
+      // Build image content for the AI
+      const imageContent: any[] = [];
+      
+      // Add all question page images
+      for (let i = 0; i < questionsImages.length; i++) {
+        imageContent.push({
+          type: "image_url",
+          image_url: { url: `data:image/jpeg;base64,${questionsImages[i]}` }
+        });
+      }
+      
+      // Add solutions page images if provided
+      if (hasSeparateSolutions && solutionsImages && solutionsImages.length > 0) {
+        console.log(`Processing ${solutionsImages.length} solution pages with OCR`);
+        for (let i = 0; i < solutionsImages.length; i++) {
+          imageContent.push({
+            type: "image_url",
+            image_url: { url: `data:image/jpeg;base64,${solutionsImages[i]}` }
+          });
+        }
       }
 
-      if (solutionsText) {
-        console.log(`Solutions text length: ${solutionsText.length}`);
-        console.log("Solutions text preview:", solutionsText.substring(0, 500));
-      }
-    }
+      const ocrSystemPrompt = `You are an expert OCR and exam parser. You will receive images of exam pages.
+Your task is to:
+1. Read and transcribe ALL text from the images accurately (OCR)
+2. Extract all questions from the exam
+3. Identify the question type (multiple_choice, true_false, or short_answer)
+4. Extract all answer options for multiple choice questions
+5. Identify the correct answer if shown
+6. Generate a clear, educational explanation for each question
 
-    // Build the prompt for text-based parsing
-    const systemPrompt = `You are an expert exam parser and educational content creator. Your task is to:
+CRITICAL: Return ONLY a valid JSON array with NO additional text, markdown, or formatting.
+Each question object must have:
+- question_text: string (the full question)
+- question_type: "multiple_choice" | "true_false" | "short_answer"
+- options: string[] (for multiple choice, without A/B/C/D prefixes)
+- correct_answer: string (the correct answer text, not the letter)
+- solution: string (the original solution if visible, or empty string)
+- explanation: string (your AI-generated educational explanation)
+
+Example output format:
+[{"question_text":"What is 2+2?","question_type":"multiple_choice","options":["3","4","5","6"],"correct_answer":"4","solution":"","explanation":"2+2=4 because..."}]`;
+
+      let ocrUserPrompt = `Please analyze these exam page images and extract all questions. `;
+      if (hasSeparateSolutions && solutionsImages && solutionsImages.length > 0) {
+        ocrUserPrompt += `The first ${questionsImages.length} images are question pages, and the remaining ${solutionsImages.length} images are solution pages. Match solutions to questions. `;
+      }
+      ocrUserPrompt += `Return ONLY the JSON array.`;
+
+      console.log("Sending images to AI for OCR parsing...");
+
+      const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${Deno.env.get("LOVABLE_API_KEY")}`,
+        },
+        body: JSON.stringify({
+          model: "google/gemini-2.5-flash",
+          messages: [
+            { role: "system", content: ocrSystemPrompt },
+            { 
+              role: "user", 
+              content: [
+                { type: "text", text: ocrUserPrompt },
+                ...imageContent
+              ]
+            }
+          ],
+          temperature: 0.3,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error("AI API error:", response.status, errorText);
+        if (response.status === 429) {
+          return new Response(JSON.stringify({ error: "Rate limit exceeded. Please try again in a moment." }), {
+            status: 429,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+        if (response.status === 402) {
+          return new Response(JSON.stringify({ error: "AI credits exhausted. Please add more credits." }), {
+            status: 402,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+        throw new Error(`AI API error: ${response.status}`);
+      }
+
+      const aiResponse = await response.json();
+      const content = aiResponse.choices?.[0]?.message?.content || "";
+
+      console.log("OCR AI response received, length:", content.length);
+      console.log("OCR AI response preview:", content.substring(0, 500));
+
+      questions = parseQuestionsFromAIResponse(content);
+
+    } else {
+      // Text-based parsing (original flow)
+      const questionsText = questionsTextFromClient
+        ? String(questionsTextFromClient)
+        : await extractTextFromPdf(questionsPdf);
+
+      console.log(`Questions text length: ${questionsText.length}`);
+      console.log("Questions text preview:", questionsText.substring(0, 500));
+
+      let solutionsText = "";
+      if (hasSeparateSolutions) {
+        if (solutionsTextFromClient) {
+          solutionsText = String(solutionsTextFromClient);
+        } else if (solutionsPdf) {
+          solutionsText = await extractTextFromPdf(solutionsPdf);
+        }
+
+        if (solutionsText) {
+          console.log(`Solutions text length: ${solutionsText.length}`);
+          console.log("Solutions text preview:", solutionsText.substring(0, 500));
+        }
+      }
+
+      const systemPrompt = `You are an expert exam parser and educational content creator. Your task is to:
 1. Extract all questions from the provided text exactly as they appear
 2. Identify the question type (multiple_choice, true_false, or short_answer)
 3. Extract all answer options for multiple choice questions
@@ -172,9 +291,9 @@ Each question object must have:
 Example output format:
 [{"question_text":"What is 2+2?","question_type":"multiple_choice","options":["3","4","5","6"],"correct_answer":"4","solution":"","explanation":"2+2=4 because..."}]`;
 
-    let userPrompt = "";
-    if (hasSeparateSolutions && solutionsText) {
-      userPrompt = `Here is the exam questions text:
+      let userPrompt = "";
+      if (hasSeparateSolutions && solutionsText) {
+        userPrompt = `Here is the exam questions text:
 
 ${questionsText}
 
@@ -183,76 +302,62 @@ And here are the solutions:
 ${solutionsText}
 
 Please extract all questions, match them with their solutions, and generate helpful explanations. Return ONLY the JSON array.`;
-    } else {
-      userPrompt = `Here is the exam text (may include both questions and solutions):
+      } else {
+        userPrompt = `Here is the exam text (may include both questions and solutions):
 
 ${questionsText}
 
 Please extract all questions and their solutions (if included), and generate helpful educational explanations for each. Return ONLY the JSON array.`;
-    }
-
-    console.log("Sending to AI for parsing...");
-
-    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${Deno.env.get("LOVABLE_API_KEY")}`,
-      },
-      body: JSON.stringify({
-        model: "google/gemini-2.5-flash",
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userPrompt }
-        ],
-        temperature: 0.3,
-      }),
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error("AI API error:", response.status, errorText);
-      throw new Error(`AI API error: ${response.status}`);
-    }
-
-    const aiResponse = await response.json();
-    const content = aiResponse.choices?.[0]?.message?.content || "";
-
-    console.log("AI response received, length:", content.length);
-    console.log("AI response preview:", content.substring(0, 500));
-
-    // Parse the JSON from the response
-    let questions: Question[] = [];
-    try {
-      // Clean up the response - remove markdown code blocks if present
-      let cleanContent = content.trim();
-      if (cleanContent.startsWith("```json")) {
-        cleanContent = cleanContent.slice(7);
-      } else if (cleanContent.startsWith("```")) {
-        cleanContent = cleanContent.slice(3);
       }
-      if (cleanContent.endsWith("```")) {
-        cleanContent = cleanContent.slice(0, -3);
-      }
-      cleanContent = cleanContent.trim();
 
-      // Try to find JSON array in the response
-      const jsonMatch = cleanContent.match(/\[[\s\S]*\]/);
-      if (jsonMatch) {
-        questions = JSON.parse(jsonMatch[0]);
-      } else {
-        // Try parsing the whole content as JSON
-        questions = JSON.parse(cleanContent);
+      console.log("Sending to AI for parsing...");
+
+      const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${Deno.env.get("LOVABLE_API_KEY")}`,
+        },
+        body: JSON.stringify({
+          model: "google/gemini-2.5-flash",
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: userPrompt }
+          ],
+          temperature: 0.3,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error("AI API error:", response.status, errorText);
+        if (response.status === 429) {
+          return new Response(JSON.stringify({ error: "Rate limit exceeded. Please try again in a moment." }), {
+            status: 429,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+        if (response.status === 402) {
+          return new Response(JSON.stringify({ error: "AI credits exhausted. Please add more credits." }), {
+            status: 402,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+        throw new Error(`AI API error: ${response.status}`);
       }
-    } catch (parseError) {
-      console.error("Failed to parse AI response:", parseError);
-      console.log("Raw content:", content.substring(0, 2000));
-      
-      // If no questions could be parsed, return a helpful error
-      if (questionsText.length < 50 || questionsText.includes("Unable to extract")) {
-        throw new Error("Could not extract text from PDF. The PDF may be image-based or protected. Please try a different PDF or manually enter questions.");
+
+      const aiResponse = await response.json();
+      const content = aiResponse.choices?.[0]?.message?.content || "";
+
+      console.log("AI response received, length:", content.length);
+      console.log("AI response preview:", content.substring(0, 500));
+
+      questions = parseQuestionsFromAIResponse(content);
+
+      // If no questions could be parsed from text, suggest OCR
+      if (questions.length === 0 && (questionsText.length < 50 || questionsText.includes("Unable to extract"))) {
+        throw new Error("Could not extract text from PDF. The PDF may be image-based or scanned. Please enable OCR mode and try again.");
       }
-      throw new Error("Failed to parse questions from the PDF content. Please try again.");
     }
 
     if (!Array.isArray(questions) || questions.length === 0) {
@@ -284,3 +389,37 @@ Please extract all questions and their solutions (if included), and generate hel
     });
   }
 });
+
+// Helper function to parse questions from AI response
+function parseQuestionsFromAIResponse(content: string): Question[] {
+  let questions: Question[] = [];
+  
+  try {
+    // Clean up the response - remove markdown code blocks if present
+    let cleanContent = content.trim();
+    if (cleanContent.startsWith("```json")) {
+      cleanContent = cleanContent.slice(7);
+    } else if (cleanContent.startsWith("```")) {
+      cleanContent = cleanContent.slice(3);
+    }
+    if (cleanContent.endsWith("```")) {
+      cleanContent = cleanContent.slice(0, -3);
+    }
+    cleanContent = cleanContent.trim();
+
+    // Try to find JSON array in the response
+    const jsonMatch = cleanContent.match(/\[[\s\S]*\]/);
+    if (jsonMatch) {
+      questions = JSON.parse(jsonMatch[0]);
+    } else {
+      // Try parsing the whole content as JSON
+      questions = JSON.parse(cleanContent);
+    }
+  } catch (parseError) {
+    console.error("Failed to parse AI response:", parseError);
+    console.log("Raw content:", content.substring(0, 2000));
+    throw new Error("Failed to parse questions from the PDF content. Please try again.");
+  }
+  
+  return questions;
+}
