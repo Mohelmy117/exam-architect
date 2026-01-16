@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Loader2, FileText, Upload, X } from 'lucide-react';
+import { Loader2, FileText, Upload, X, ScanText } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import * as pdfjsLib from 'pdfjs-dist';
@@ -53,6 +53,39 @@ async function extractTextWithPdfJs(
   return fullText.trim();
 }
 
+// Convert PDF pages to base64 images for OCR
+async function extractPagesAsImages(
+  file: File,
+  startPage?: number,
+  endPage?: number,
+  scale: number = 1.5
+): Promise<string[]> {
+  const arrayBuffer = await file.arrayBuffer();
+  const pdf = await (pdfjsLib as any).getDocument({ data: arrayBuffer }).promise;
+
+  const start = startPage || 1;
+  const end = Math.min(endPage || pdf.numPages, pdf.numPages);
+  const images: string[] = [];
+
+  for (let pageNum = start; pageNum <= end; pageNum++) {
+    const page = await pdf.getPage(pageNum);
+    const viewport = page.getViewport({ scale });
+
+    const canvas = document.createElement('canvas');
+    const context = canvas.getContext('2d')!;
+    canvas.height = viewport.height;
+    canvas.width = viewport.width;
+
+    await page.render({ canvasContext: context, viewport }).promise;
+
+    // Convert canvas to base64 JPEG (smaller than PNG)
+    const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+    images.push(dataUrl.split(',')[1]);
+  }
+
+  return images;
+}
+
 const fileToBase64 = (file: File): Promise<string> => {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -69,6 +102,7 @@ export function PDFExamParser({ onQuestionsGenerated }: PDFExamParserProps) {
   const [questionsPdf, setQuestionsPdf] = useState<File | null>(null);
   const [solutionsPdf, setSolutionsPdf] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
+  const [ocrMode, setOcrMode] = useState(false);
   const [questionsTotalPages, setQuestionsTotalPages] = useState<number | null>(null);
   const [solutionsTotalPages, setSolutionsTotalPages] = useState<number | null>(null);
   const [questionsPageRange, setQuestionsPageRange] = useState<PageRange | null>(null);
@@ -154,37 +188,64 @@ export function PDFExamParser({ onQuestionsGenerated }: PDFExamParserProps) {
 
     setLoading(true);
     try {
-      // Prefer robust client-side text extraction (works for most text PDFs)
       let questionsText = '';
       let solutionsText: string | null = null;
+      let questionsImages: string[] = [];
+      let solutionsImages: string[] = [];
 
-      try {
-        questionsText = await extractTextWithPdfJs(
+      if (ocrMode) {
+        // OCR mode: Convert PDF pages to images for vision-based OCR
+        toast.info('Converting PDF pages to images for OCR...');
+        questionsImages = await extractPagesAsImages(
           questionsPdf,
           questionsPageRange?.start,
           questionsPageRange?.end
         );
-        solutionsText = solutionsPdf
-          ? await extractTextWithPdfJs(
-              solutionsPdf,
-              solutionsPageRange?.start,
-              solutionsPageRange?.end
-            )
-          : null;
-      } catch (e) {
-        console.warn('PDF.js extraction failed, falling back to base64 upload:', e);
+        if (solutionsPdf) {
+          solutionsImages = await extractPagesAsImages(
+            solutionsPdf,
+            solutionsPageRange?.start,
+            solutionsPageRange?.end
+          );
+        }
+      } else {
+        // Standard mode: Extract text with PDF.js
+        try {
+          questionsText = await extractTextWithPdfJs(
+            questionsPdf,
+            questionsPageRange?.start,
+            questionsPageRange?.end
+          );
+          solutionsText = solutionsPdf
+            ? await extractTextWithPdfJs(
+                solutionsPdf,
+                solutionsPageRange?.start,
+                solutionsPageRange?.end
+              )
+            : null;
+        } catch (e) {
+          console.warn('PDF.js extraction failed, falling back to base64 upload:', e);
+        }
       }
 
       const body: any = {
         hasSeparateSolutions: !!solutionsPdf,
+        useOcr: ocrMode,
       };
 
-      if (questionsText) body.questionsText = questionsText;
-      if (solutionsText) body.solutionsText = solutionsText;
+      if (ocrMode) {
+        // Send images for OCR processing
+        body.questionsImages = questionsImages;
+        if (solutionsImages.length > 0) body.solutionsImages = solutionsImages;
+      } else {
+        // Send extracted text
+        if (questionsText) body.questionsText = questionsText;
+        if (solutionsText) body.solutionsText = solutionsText;
 
-      // Fallback for image-based/protected PDFs (server will try best-effort extraction)
-      if (!questionsText) body.questionsPdf = await fileToBase64(questionsPdf);
-      if (solutionsPdf && !solutionsText) body.solutionsPdf = await fileToBase64(solutionsPdf);
+        // Fallback for image-based/protected PDFs
+        if (!questionsText) body.questionsPdf = await fileToBase64(questionsPdf);
+        if (solutionsPdf && !solutionsText) body.solutionsPdf = await fileToBase64(solutionsPdf);
+      }
 
       const { data, error } = await supabase.functions.invoke('parse-pdf-exam', { body });
 
@@ -192,7 +253,7 @@ export function PDFExamParser({ onQuestionsGenerated }: PDFExamParserProps) {
 
       if (data.questions && data.questions.length > 0) {
         onQuestionsGenerated(data.questions);
-        toast.success(`Parsed ${data.questions.length} questions from PDF`);
+        toast.success(`Parsed ${data.questions.length} questions from PDF${ocrMode ? ' using OCR' : ''}`);
         setQuestionsPdf(null);
         setSolutionsPdf(null);
       } else {
@@ -200,7 +261,7 @@ export function PDFExamParser({ onQuestionsGenerated }: PDFExamParserProps) {
       }
     } catch (error) {
       console.error('Error parsing PDF:', error);
-      toast.error('Failed to parse PDF');
+      toast.error('Failed to parse PDF. Try enabling OCR mode for scanned documents.');
     } finally {
       setLoading(false);
     }
@@ -332,16 +393,36 @@ export function PDFExamParser({ onQuestionsGenerated }: PDFExamParserProps) {
           </p>
         </div>
 
+        {/* OCR Toggle */}
+        <div className="flex items-center justify-between rounded-lg border bg-muted/30 p-3">
+          <div className="flex items-center gap-2">
+            <ScanText className="h-4 w-4 text-primary" />
+            <div>
+              <p className="text-sm font-medium">OCR Mode (Scanned PDFs)</p>
+              <p className="text-xs text-muted-foreground">
+                Enable for image-based or scanned PDFs that don't contain selectable text
+              </p>
+            </div>
+          </div>
+          <Button
+            variant={ocrMode ? 'default' : 'outline'}
+            size="sm"
+            onClick={() => setOcrMode(!ocrMode)}
+          >
+            {ocrMode ? 'Enabled' : 'Disabled'}
+          </Button>
+        </div>
+
         <Button onClick={parsePDFs} disabled={loading || !questionsPdf} className="w-full">
           {loading ? (
             <>
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              Parsing PDF...
+              {ocrMode ? 'Processing with OCR...' : 'Parsing PDF...'}
             </>
           ) : (
             <>
-              <FileText className="mr-2 h-4 w-4" />
-              Parse PDF
+              {ocrMode ? <ScanText className="mr-2 h-4 w-4" /> : <FileText className="mr-2 h-4 w-4" />}
+              {ocrMode ? 'Parse with OCR' : 'Parse PDF'}
             </>
           )}
         </Button>
