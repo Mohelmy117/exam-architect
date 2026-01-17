@@ -1,13 +1,13 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
+import { useAuth } from '@/hooks/useAuth';
 import { ExamTimer } from '@/components/ExamTimer';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Textarea } from '@/components/ui/textarea';
+import { Label } from '@/components/ui/label';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import {
   AlertDialog,
@@ -19,12 +19,12 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { Exam, Question, ExamAttempt } from '@/types/exam';
+import { Exam, Question } from '@/types/exam';
 import { toast } from 'sonner';
-import { Loader2, CheckCircle, AlertCircle, Lightbulb, ChevronDown, CheckCircle2, XCircle, ArrowLeft, FileText, Edit2 } from 'lucide-react';
+import { Loader2, CheckCircle, AlertCircle, Lightbulb, ChevronDown, CheckCircle2, XCircle, FileText, Play } from 'lucide-react';
 import { Progress } from '@/components/ui/progress';
 
-// Generate or retrieve session ID for anonymous tracking
+// Generate or retrieve session ID for tracking
 const getSessionId = (): string => {
   let sessionId = sessionStorage.getItem('exam_session_id');
   if (!sessionId) {
@@ -49,11 +49,13 @@ interface StudentQuestion {
 export default function TakeExam() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const { user, loading: authLoading } = useAuth();
+  
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [exam, setExam] = useState<Exam | null>(null);
   const [questions, setQuestions] = useState<StudentQuestion[]>([]);
-  const [fullQuestions, setFullQuestions] = useState<Question[]>([]); // For results view
+  const [fullQuestions, setFullQuestions] = useState<Question[]>([]);
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [attemptId, setAttemptId] = useState<string | null>(null);
   const [sessionId] = useState<string>(getSessionId);
@@ -64,17 +66,22 @@ export default function TakeExam() {
   const [openExplanations, setOpenExplanations] = useState<Record<string, boolean>>({});
   const [showSubmitDialog, setShowSubmitDialog] = useState(false);
   const [showSummary, setShowSummary] = useState(false);
-
-  // Student info
-  const [studentName, setStudentName] = useState('');
-  const [studentEmail, setStudentEmail] = useState('');
   const [started, setStarted] = useState(false);
 
+  // Redirect to login if not authenticated
+  useEffect(() => {
+    if (!authLoading && !user) {
+      // Redirect to auth with return URL
+      const returnUrl = `/exam/${id}`;
+      navigate(`/auth?redirect=${encodeURIComponent(returnUrl)}`, { replace: true });
+    }
+  }, [authLoading, user, navigate, id]);
+
+  // Fetch exam data when authenticated
   useEffect(() => {
     const fetchExam = async () => {
-      if (!id) return;
+      if (!id || !user) return;
 
-      // Fetch exam and questions from the secure view (without correct answers)
       const [examRes, questionsRes] = await Promise.all([
         supabase.from('exams').select('*').eq('id', id).eq('is_published', true).single(),
         supabase.from('student_exam_questions').select('*').eq('exam_id', id).order('order_index'),
@@ -99,18 +106,32 @@ export default function TakeExam() {
       setLoading(false);
     };
 
-    fetchExam();
-  }, [id, navigate]);
+    if (user) {
+      fetchExam();
+    }
+  }, [id, navigate, user]);
+
+  // Get user display name and email from Google profile
+  const getUserDisplayName = () => {
+    if (!user) return 'Student';
+    return user.user_metadata?.full_name || user.user_metadata?.name || user.email?.split('@')[0] || 'Student';
+  };
+
+  const getUserEmail = () => {
+    return user?.email || '';
+  };
 
   const startExam = async () => {
-    if (!exam) return;
+    if (!exam || !user) return;
 
-    // Use secure RPC function to start exam
+    const studentName = getUserDisplayName();
+    const studentEmail = getUserEmail();
+
     const { data, error } = await supabase.rpc('start_exam_attempt', {
       p_exam_id: exam.id,
       p_session_id: sessionId,
-      p_student_name: studentName || null,
-      p_student_email: studentEmail || null,
+      p_student_name: studentName,
+      p_student_email: studentEmail,
     });
 
     if (error || !data || data.length === 0) {
@@ -129,7 +150,6 @@ export default function TakeExam() {
 
     setSubmitting(true);
 
-    // Use secure RPC function to submit exam - score calculated server-side
     const { data, error } = await supabase.rpc('submit_exam_attempt', {
       p_attempt_id: attemptId,
       p_session_id: sessionId,
@@ -147,7 +167,6 @@ export default function TakeExam() {
     setScore(result.score);
     setCorrectCount(result.correct_count);
 
-    // Now fetch full question data for results view (including correct answers)
     const { data: fullQuestionData } = await supabase
       .from('questions')
       .select('*')
@@ -180,6 +199,15 @@ export default function TakeExam() {
   const isCorrect = (questionId: string, correctAnswer: string) => {
     return answers[questionId] === correctAnswer;
   };
+
+  // Show loading while checking auth
+  if (authLoading || (!user && !authLoading)) {
+    return (
+      <div className="flex min-h-screen items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
 
   if (loading) {
     return (
@@ -341,6 +369,7 @@ export default function TakeExam() {
     );
   }
 
+  // Pre-exam start screen - show user info and start button
   if (!started) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background p-4">
@@ -349,33 +378,42 @@ export default function TakeExam() {
             <CardTitle>{exam.title}</CardTitle>
             <CardDescription>{exam.description}</CardDescription>
           </CardHeader>
-          <CardContent className="space-y-4">
+          <CardContent className="space-y-6">
             {exam.time_limit_minutes && (
               <div className="rounded-lg bg-muted p-4 text-center">
                 <p className="text-sm text-muted-foreground">Time Limit</p>
                 <p className="text-2xl font-bold">{exam.time_limit_minutes} minutes</p>
               </div>
             )}
-            <div className="space-y-2">
-              <Label htmlFor="name">Your Name</Label>
-              <Input
-                id="name"
-                value={studentName}
-                onChange={(e) => setStudentName(e.target.value)}
-                placeholder="Enter your name"
-              />
+
+            {/* Show authenticated user info */}
+            <div className="rounded-lg border bg-muted/30 p-4 space-y-2">
+              <p className="text-sm font-medium text-foreground">Signed in as:</p>
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary text-primary-foreground font-semibold">
+                  {getUserDisplayName().charAt(0).toUpperCase()}
+                </div>
+                <div>
+                  <p className="font-medium">{getUserDisplayName()}</p>
+                  <p className="text-sm text-muted-foreground">{getUserEmail()}</p>
+                </div>
+              </div>
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="email">Your Email (optional)</Label>
-              <Input
-                id="email"
-                type="email"
-                value={studentEmail}
-                onChange={(e) => setStudentEmail(e.target.value)}
-                placeholder="Enter your email"
-              />
+
+            <div className="rounded-lg bg-primary/5 border border-primary/20 p-4">
+              <div className="flex items-start gap-3">
+                <CheckCircle className="h-5 w-5 text-primary mt-0.5" />
+                <div className="text-sm">
+                  <p className="font-medium text-foreground">Ready to begin</p>
+                  <p className="text-muted-foreground">
+                    {questions.length} questions • Your progress will be saved automatically
+                  </p>
+                </div>
+              </div>
             </div>
-            <Button onClick={startExam} className="w-full" disabled={!studentName.trim()}>
+
+            <Button onClick={startExam} className="w-full h-12 text-base" size="lg">
+              <Play className="mr-2 h-5 w-5" />
               Start Exam
             </Button>
           </CardContent>
@@ -384,6 +422,7 @@ export default function TakeExam() {
     );
   }
 
+  // Active exam view
   const answeredCount = Object.keys(answers).filter(key => answers[key]?.trim()).length;
   const unansweredCount = questions.length - answeredCount;
   const progressPercent = questions.length > 0 ? (answeredCount / questions.length) * 100 : 0;
@@ -414,6 +453,89 @@ export default function TakeExam() {
     }
   };
 
+  // Summary view
+  if (showSummary) {
+    return (
+      <div className="min-h-screen bg-background">
+        <header className="sticky top-0 z-50 border-b bg-background/95 backdrop-blur">
+          <div className="container flex h-16 items-center justify-between">
+            <h1 className="text-lg font-semibold">{exam.title} - Review</h1>
+            {exam.time_limit_minutes && startedAt && (
+              <ExamTimer
+                timeLimitMinutes={exam.time_limit_minutes}
+                startedAt={startedAt}
+                onTimeUp={handleTimeUp}
+              />
+            )}
+          </div>
+        </header>
+
+        <main className="container py-8">
+          <div className="mx-auto max-w-2xl space-y-6">
+            <Card>
+              <CardHeader>
+                <CardTitle>Review Your Answers</CardTitle>
+                <CardDescription>
+                  {answeredCount} of {questions.length} questions answered
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <Progress value={progressPercent} className="h-3" />
+                
+                <div className="grid gap-2">
+                  {questions.map((q, index) => {
+                    const hasAnswer = answers[q.id]?.trim();
+                    return (
+                      <button
+                        key={q.id}
+                        onClick={() => goBackToExam(q.id)}
+                        className={`flex items-center justify-between rounded-lg border p-3 text-left transition-colors hover:bg-muted/50 ${
+                          hasAnswer ? 'border-green-500/30 bg-green-50/30 dark:bg-green-950/10' : 'border-orange-500/30 bg-orange-50/30 dark:bg-orange-950/10'
+                        }`}
+                      >
+                        <span className="font-medium">Question {index + 1}</span>
+                        <span className={`text-sm ${hasAnswer ? 'text-green-600' : 'text-orange-600'}`}>
+                          {hasAnswer ? 'Answered' : 'Unanswered'}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div className="flex gap-3 pt-4">
+                  <Button variant="outline" onClick={() => goBackToExam()} className="flex-1">
+                    Back to Exam
+                  </Button>
+                  <Button onClick={handleFinalSubmit} disabled={submitting} className="flex-1">
+                    {submitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                    Submit Exam
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        </main>
+
+        <AlertDialog open={showSubmitDialog} onOpenChange={setShowSubmitDialog}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Submit with unanswered questions?</AlertDialogTitle>
+              <AlertDialogDescription>
+                You have {unansweredCount} unanswered question{unansweredCount > 1 ? 's' : ''}. 
+                Are you sure you want to submit?
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Go Back</AlertDialogCancel>
+              <AlertDialogAction onClick={submitExam}>Submit Anyway</AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      </div>
+    );
+  }
+
+  // Main exam taking view
   return (
     <div className="min-h-screen bg-background">
       <header className="sticky top-0 z-50 border-b bg-background/95 backdrop-blur">
@@ -435,7 +557,6 @@ export default function TakeExam() {
             </div>
           </div>
           
-          {/* Progress Section */}
           <div className="space-y-2">
             <div className="flex items-center justify-between text-sm">
               <span className="text-muted-foreground">
@@ -445,20 +566,18 @@ export default function TakeExam() {
             </div>
             <Progress value={progressPercent} className="h-2" />
             
-            {/* Question Navigator */}
             <div className="flex flex-wrap gap-1.5 pt-1">
               {questions.map((q, index) => {
-                const isAnswered = answers[q.id!]?.trim();
+                const hasAnswer = answers[q.id]?.trim();
                 return (
                   <button
                     key={q.id}
-                    onClick={() => scrollToQuestion(q.id!)}
-                    className={`flex h-8 w-8 items-center justify-center rounded-full text-xs font-medium transition-all hover:scale-110 ${
-                      isAnswered
+                    onClick={() => scrollToQuestion(q.id)}
+                    className={`flex h-8 w-8 items-center justify-center rounded text-xs font-medium transition-colors ${
+                      hasAnswer
                         ? 'bg-primary text-primary-foreground'
                         : 'bg-muted text-muted-foreground hover:bg-muted/80'
                     }`}
-                    title={`Question ${index + 1}${isAnswered ? ' (Answered)' : ' (Unanswered)'}`}
                   >
                     {index + 1}
                   </button>
@@ -469,215 +588,51 @@ export default function TakeExam() {
         </div>
       </header>
 
-      {showSummary ? (
-        /* Summary View */
-        <main className="container py-8">
-          <div className="mx-auto max-w-3xl space-y-6">
-            <Card className="border-2 border-primary/20">
+      <main className="container py-8">
+        <div className="mx-auto max-w-3xl space-y-6">
+          {questions.map((question, index) => (
+            <Card key={question.id} id={`question-${question.id}`} className="scroll-mt-32">
               <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <FileText className="h-5 w-5 text-primary" />
-                  Review Your Answers
-                </CardTitle>
-                <CardDescription>
-                  Review all your answers before submitting. Click on any question to edit your answer.
-                </CardDescription>
+                <CardTitle className="text-base">Question {index + 1}</CardTitle>
               </CardHeader>
-              <CardContent>
-                <div className="mb-4 flex items-center justify-between rounded-lg bg-muted p-4">
-                  <div>
-                    <p className="text-sm text-muted-foreground">Total Answered</p>
-                    <p className="text-2xl font-bold text-primary">{answeredCount}/{questions.length}</p>
-                  </div>
-                  {unansweredCount > 0 && (
-                    <div className="rounded-lg bg-yellow-100 px-3 py-2 dark:bg-yellow-900/30">
-                      <p className="text-sm font-medium text-yellow-800 dark:text-yellow-200">
-                        {unansweredCount} unanswered
-                      </p>
-                    </div>
-                  )}
-                </div>
+              <CardContent className="space-y-4">
+                <p className="text-lg">{question.question_text}</p>
+
+                {question.image_url && (
+                  <img
+                    src={question.image_url}
+                    alt="Question"
+                    className="max-h-64 rounded-lg object-contain"
+                  />
+                )}
+
+                {question.question_type === 'multiple_choice' || question.question_type === 'true_false' ? (
+                  <RadioGroup
+                    value={answers[question.id] || ''}
+                    onValueChange={(value) => setAnswers(prev => ({ ...prev, [question.id]: value }))}
+                  >
+                    {question.options.map((option, optIndex) => (
+                      <div key={optIndex} className="flex items-center space-x-2">
+                        <RadioGroupItem value={option} id={`${question.id}-${optIndex}`} />
+                        <Label htmlFor={`${question.id}-${optIndex}`} className="cursor-pointer">
+                          {option}
+                        </Label>
+                      </div>
+                    ))}
+                  </RadioGroup>
+                ) : (
+                  <Textarea
+                    placeholder="Type your answer here..."
+                    value={answers[question.id] || ''}
+                    onChange={(e) => setAnswers(prev => ({ ...prev, [question.id]: e.target.value }))}
+                    rows={4}
+                  />
+                )}
               </CardContent>
             </Card>
-
-            <div className="space-y-3">
-              {questions.map((question, index) => {
-                const answer = answers[question.id!];
-                const isAnswered = answer?.trim();
-                
-                return (
-                  <Card 
-                    key={question.id}
-                    className={`cursor-pointer transition-all hover:shadow-md ${
-                      isAnswered 
-                        ? 'border-green-200 bg-green-50/50 dark:border-green-800/30 dark:bg-green-950/20' 
-                        : 'border-yellow-200 bg-yellow-50/50 dark:border-yellow-800/30 dark:bg-yellow-950/20'
-                    }`}
-                    onClick={() => goBackToExam(question.id!)}
-                  >
-                    <CardContent className="p-4">
-                      <div className="flex items-start justify-between gap-4">
-                        <div className="flex-1 space-y-2">
-                          <div className="flex items-center gap-2">
-                            <span className={`flex h-6 w-6 items-center justify-center rounded-full text-xs font-medium ${
-                              isAnswered 
-                                ? 'bg-green-500 text-white' 
-                                : 'bg-yellow-500 text-white'
-                            }`}>
-                              {index + 1}
-                            </span>
-                            <span className="text-sm font-medium text-muted-foreground">
-                              {question.question_type === 'multiple_choice' ? 'Multiple Choice' :
-                               question.question_type === 'true_false' ? 'True/False' : 'Short Answer'}
-                            </span>
-                            {isAnswered ? (
-                              <CheckCircle2 className="h-4 w-4 text-green-600" />
-                            ) : (
-                              <AlertCircle className="h-4 w-4 text-yellow-600" />
-                            )}
-                          </div>
-                          <p className="line-clamp-2 text-sm">{question.question_text}</p>
-                          <div className="pt-1">
-                            <p className="text-sm">
-                              <span className="text-muted-foreground">Your answer: </span>
-                              {isAnswered ? (
-                                <span className="font-medium text-green-700 dark:text-green-400">
-                                  {answer.length > 100 ? answer.substring(0, 100) + '...' : answer}
-                                </span>
-                              ) : (
-                                <span className="italic text-yellow-600 dark:text-yellow-400">Not answered</span>
-                              )}
-                            </p>
-                          </div>
-                        </div>
-                        <Button variant="ghost" size="sm" className="shrink-0">
-                          <Edit2 className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </CardContent>
-                  </Card>
-                );
-              })}
-            </div>
-
-            <div className="flex items-center justify-between gap-4 pt-4">
-              <Button variant="outline" onClick={() => setShowSummary(false)}>
-                <ArrowLeft className="mr-2 h-4 w-4" />
-                Back to Exam
-              </Button>
-              <Button onClick={handleFinalSubmit} size="lg" disabled={submitting}>
-                {submitting ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Submitting...
-                  </>
-                ) : (
-                  'Submit Exam'
-                )}
-              </Button>
-            </div>
-          </div>
-        </main>
-      ) : (
-        /* Questions View */
-        <main className="container py-8">
-          <div className="mx-auto max-w-3xl space-y-6">
-            {questions.map((question, index) => (
-              <Card key={question.id} id={`question-${question.id}`} className="question-card scroll-mt-48">
-                <CardHeader>
-                  <CardTitle className="text-base">
-                    Question {index + 1} of {questions.length}
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <p className="text-lg">{question.question_text}</p>
-
-                  {question.image_url && (
-                    <img
-                      src={question.image_url}
-                      alt="Question"
-                      className="max-h-64 rounded-lg object-contain"
-                    />
-                  )}
-
-                  {question.question_type === 'multiple_choice' && (
-                    <RadioGroup
-                      value={answers[question.id!] || ''}
-                      onValueChange={(value) =>
-                        setAnswers({ ...answers, [question.id!]: value })
-                      }
-                    >
-                      {(question.options || []).map((option, optIndex) => (
-                        <div key={optIndex} className="flex items-center space-x-2">
-                          <RadioGroupItem value={option} id={`${question.id}-${optIndex}`} />
-                          <Label htmlFor={`${question.id}-${optIndex}`}>{option}</Label>
-                        </div>
-                      ))}
-                    </RadioGroup>
-                  )}
-
-                  {question.question_type === 'true_false' && (
-                    <RadioGroup
-                      value={answers[question.id!] || ''}
-                      onValueChange={(value) =>
-                        setAnswers({ ...answers, [question.id!]: value })
-                      }
-                    >
-                      <div className="flex items-center space-x-2">
-                        <RadioGroupItem value="True" id={`${question.id}-true`} />
-                        <Label htmlFor={`${question.id}-true`}>True</Label>
-                      </div>
-                      <div className="flex items-center space-x-2">
-                        <RadioGroupItem value="False" id={`${question.id}-false`} />
-                        <Label htmlFor={`${question.id}-false`}>False</Label>
-                      </div>
-                    </RadioGroup>
-                  )}
-
-                  {question.question_type === 'short_answer' && (
-                    <Textarea
-                      value={answers[question.id!] || ''}
-                      onChange={(e) =>
-                        setAnswers({ ...answers, [question.id!]: e.target.value })
-                      }
-                      placeholder="Type your answer here..."
-                    />
-                  )}
-                </CardContent>
-              </Card>
-            ))}
-
-            <div className="flex justify-end">
-              <Button onClick={handleSubmitClick} size="lg">
-                <FileText className="mr-2 h-4 w-4" />
-                Review & Submit
-              </Button>
-            </div>
-          </div>
-        </main>
-      )}
-
-      {/* Confirmation Dialog for Unanswered Questions */}
-      <AlertDialog open={showSubmitDialog} onOpenChange={setShowSubmitDialog}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle className="flex items-center gap-2">
-              <AlertCircle className="h-5 w-5 text-yellow-500" />
-              Unanswered Questions
-            </AlertDialogTitle>
-            <AlertDialogDescription>
-              You have <span className="font-semibold text-foreground">{unansweredCount}</span> unanswered {unansweredCount === 1 ? 'question' : 'questions'}. 
-              Are you sure you want to submit your exam? Unanswered questions will be marked as incorrect.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel onClick={() => setShowSubmitDialog(false)}>Review Answers</AlertDialogCancel>
-            <AlertDialogAction onClick={() => { setShowSubmitDialog(false); submitExam(); }}>
-              Submit Anyway
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+          ))}
+        </div>
+      </main>
     </div>
   );
 }
