@@ -4,12 +4,24 @@ import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { toast } from 'sonner';
-import { Loader2, Shield, CheckCircle } from 'lucide-react';
+import { Loader2, Shield, Mail, Lock } from 'lucide-react';
+import { z } from 'zod';
+
+const emailSchema = z.string().email('Please enter a valid email address');
+const passwordSchema = z.string().min(6, 'Password must be at least 6 characters');
 
 export default function Auth() {
   const [googleLoading, setGoogleLoading] = useState(false);
-  const { user, loading } = useAuth();
+  const [emailLoading, setEmailLoading] = useState(false);
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [emailError, setEmailError] = useState('');
+  const [passwordError, setPasswordError] = useState('');
+  const { user, loading, signIn, signUp } = useAuth();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
 
@@ -23,10 +35,35 @@ export default function Auth() {
     }
   }, [user, loading, navigate, redirectTo]);
 
+  const validateInputs = (): boolean => {
+    let valid = true;
+    setEmailError('');
+    setPasswordError('');
+
+    try {
+      emailSchema.parse(email);
+    } catch (e) {
+      if (e instanceof z.ZodError) {
+        setEmailError(e.errors[0].message);
+        valid = false;
+      }
+    }
+
+    try {
+      passwordSchema.parse(password);
+    } catch (e) {
+      if (e instanceof z.ZodError) {
+        setPasswordError(e.errors[0].message);
+        valid = false;
+      }
+    }
+
+    return valid;
+  };
+
   const handleGoogleSignIn = async () => {
     setGoogleLoading(true);
     try {
-      // Use the redirect URL from query params, or default to dashboard
       const callbackUrl = `${window.location.origin}${redirectTo}`;
       const { error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
@@ -39,13 +76,69 @@ export default function Auth() {
         },
       });
       if (error) {
-        toast.error(error.message);
+        if (error.message.includes('provider is not enabled')) {
+          toast.error('Google sign-in is not enabled. Please use email/password or contact support.');
+        } else {
+          toast.error(error.message);
+        }
         setGoogleLoading(false);
       }
     } catch (error) {
       console.error('Google sign-in error:', error);
       toast.error('Failed to sign in with Google');
       setGoogleLoading(false);
+    }
+  };
+
+  const handleEmailSignIn = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!validateInputs()) return;
+
+    setEmailLoading(true);
+    try {
+      const { error } = await signIn(email, password);
+      if (error) {
+        if (error.message.includes('Invalid login credentials')) {
+          toast.error('Invalid email or password. Please try again.');
+        } else if (error.message.includes('Email not confirmed')) {
+          toast.error('Please confirm your email before signing in.');
+        } else {
+          toast.error(error.message);
+        }
+      } else {
+        toast.success('Signed in successfully!');
+      }
+    } catch (error) {
+      console.error('Email sign-in error:', error);
+      toast.error('Failed to sign in');
+    } finally {
+      setEmailLoading(false);
+    }
+  };
+
+  const handleEmailSignUp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!validateInputs()) return;
+
+    setEmailLoading(true);
+    try {
+      const { error } = await signUp(email, password);
+      if (error) {
+        if (error.message.includes('User already registered')) {
+          toast.error('An account with this email already exists. Please sign in instead.');
+        } else {
+          toast.error(error.message);
+        }
+      } else {
+        toast.success('Account created! You can now sign in.');
+        setEmail('');
+        setPassword('');
+      }
+    } catch (error) {
+      console.error('Email sign-up error:', error);
+      toast.error('Failed to create account');
+    } finally {
+      setEmailLoading(false);
     }
   };
 
@@ -67,30 +160,11 @@ export default function Auth() {
           <div>
             <CardTitle className="text-2xl">Welcome to ExamBuilder</CardTitle>
             <CardDescription className="mt-2">
-              Sign in securely with your Google account
+              Sign in to create and take exams
             </CardDescription>
           </div>
         </CardHeader>
         <CardContent className="space-y-6">
-          {/* Security Features */}
-          <div className="rounded-lg bg-muted/50 p-4 space-y-3">
-            <p className="text-sm font-medium text-foreground">Secure Authentication</p>
-            <div className="space-y-2">
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <CheckCircle className="h-4 w-4 text-green-500" />
-                <span>Verified email from Google</span>
-              </div>
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <CheckCircle className="h-4 w-4 text-green-500" />
-                <span>No password to remember</span>
-              </div>
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <CheckCircle className="h-4 w-4 text-green-500" />
-                <span>Protected by Google security</span>
-              </div>
-            </div>
-          </div>
-
           {/* Google Sign In Button */}
           <Button
             variant="outline"
@@ -123,9 +197,107 @@ export default function Auth() {
             Continue with Google
           </Button>
 
+          <div className="relative">
+            <div className="absolute inset-0 flex items-center">
+              <span className="w-full border-t" />
+            </div>
+            <div className="relative flex justify-center text-xs uppercase">
+              <span className="bg-card px-2 text-muted-foreground">Or continue with email</span>
+            </div>
+          </div>
+
+          {/* Email/Password Tabs */}
+          <Tabs defaultValue="signin" className="w-full">
+            <TabsList className="grid w-full grid-cols-2">
+              <TabsTrigger value="signin">Sign In</TabsTrigger>
+              <TabsTrigger value="signup">Sign Up</TabsTrigger>
+            </TabsList>
+            
+            <TabsContent value="signin" className="space-y-4 mt-4">
+              <form onSubmit={handleEmailSignIn} className="space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="signin-email">Email</Label>
+                  <div className="relative">
+                    <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                    <Input
+                      id="signin-email"
+                      type="email"
+                      placeholder="your@email.com"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      className="pl-10"
+                    />
+                  </div>
+                  {emailError && <p className="text-sm text-destructive">{emailError}</p>}
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="signin-password">Password</Label>
+                  <div className="relative">
+                    <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                    <Input
+                      id="signin-password"
+                      type="password"
+                      placeholder="••••••••"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      className="pl-10"
+                    />
+                  </div>
+                  {passwordError && <p className="text-sm text-destructive">{passwordError}</p>}
+                </div>
+                <Button type="submit" className="w-full" disabled={emailLoading}>
+                  {emailLoading ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  ) : null}
+                  Sign In
+                </Button>
+              </form>
+            </TabsContent>
+            
+            <TabsContent value="signup" className="space-y-4 mt-4">
+              <form onSubmit={handleEmailSignUp} className="space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="signup-email">Email</Label>
+                  <div className="relative">
+                    <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                    <Input
+                      id="signup-email"
+                      type="email"
+                      placeholder="your@email.com"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      className="pl-10"
+                    />
+                  </div>
+                  {emailError && <p className="text-sm text-destructive">{emailError}</p>}
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="signup-password">Password</Label>
+                  <div className="relative">
+                    <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                    <Input
+                      id="signup-password"
+                      type="password"
+                      placeholder="••••••••"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      className="pl-10"
+                    />
+                  </div>
+                  {passwordError && <p className="text-sm text-destructive">{passwordError}</p>}
+                </div>
+                <Button type="submit" className="w-full" disabled={emailLoading}>
+                  {emailLoading ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  ) : null}
+                  Create Account
+                </Button>
+              </form>
+            </TabsContent>
+          </Tabs>
+
           <p className="text-center text-xs text-muted-foreground">
             By signing in, you agree to our terms of service and privacy policy.
-            Your verified email will be used to identify you on exams.
           </p>
         </CardContent>
       </Card>
