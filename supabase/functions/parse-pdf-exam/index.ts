@@ -14,30 +14,35 @@ interface Question {
   solution?: string;
   explanation?: string;
   order_index: number;
+  image_url?: string;
+  context?: string;
+  given_info?: string;
+  required_info?: string;
+  image_analysis?: string;
+}
+
+interface ImageQuestionData {
+  question_index: number;
+  image_base64: string;
+  page_number: number;
 }
 
 // Simple PDF text extraction from base64
 async function extractTextFromPdf(base64Pdf: string): Promise<string> {
   try {
-    // Decode base64 to binary
     const binaryString = atob(base64Pdf);
     const bytes = new Uint8Array(binaryString.length);
     for (let i = 0; i < binaryString.length; i++) {
       bytes[i] = binaryString.charCodeAt(i);
     }
     
-    // Convert to string and extract readable text
     const pdfContent = new TextDecoder('utf-8', { fatal: false }).decode(bytes);
-    
-    // Extract text from PDF streams and objects
     const textParts: string[] = [];
     
-    // Method 1: Extract from text streams (BT...ET blocks)
     const btEtPattern = /BT\s*([\s\S]*?)\s*ET/g;
     let btMatch;
     while ((btMatch = btEtPattern.exec(pdfContent)) !== null) {
       const block = btMatch[1];
-      // Extract text from Tj and TJ operators
       const tjPattern = /\(([^)]*)\)\s*Tj/g;
       let tjMatch;
       while ((tjMatch = tjPattern.exec(block)) !== null) {
@@ -45,7 +50,6 @@ async function extractTextFromPdf(base64Pdf: string): Promise<string> {
           textParts.push(tjMatch[1]);
         }
       }
-      // Extract from TJ arrays
       const tjArrayPattern = /\[([^\]]+)\]\s*TJ/g;
       let tjArrMatch;
       while ((tjArrMatch = tjArrayPattern.exec(block)) !== null) {
@@ -60,14 +64,11 @@ async function extractTextFromPdf(base64Pdf: string): Promise<string> {
       }
     }
     
-    // Method 2: Extract readable strings (fallback)
     if (textParts.length < 5) {
-      // Find sequences of printable characters
       const readablePattern = /[\x20-\x7E\n\r\t]{20,}/g;
       let readableMatch;
       while ((readableMatch = readablePattern.exec(pdfContent)) !== null) {
         const text = readableMatch[0].trim();
-        // Filter out PDF syntax
         if (!text.includes('/Type') && !text.includes('/Font') && 
             !text.includes('stream') && !text.includes('endstream') &&
             !text.match(/^\d+ \d+ obj/) && !text.includes('xref')) {
@@ -83,6 +84,46 @@ async function extractTextFromPdf(base64Pdf: string): Promise<string> {
   } catch (error) {
     console.error("PDF extraction error:", error);
     return "Error extracting PDF content";
+  }
+}
+
+// Upload image to Supabase Storage and return URL
+async function uploadImageToStorage(
+  supabase: any,
+  imageBase64: string,
+  examId: string,
+  questionIndex: number
+): Promise<string | null> {
+  try {
+    const fileName = `exam-images/${examId}/question-${questionIndex}-${Date.now()}.jpg`;
+    
+    // Convert base64 to Uint8Array
+    const binaryString = atob(imageBase64);
+    const bytes = new Uint8Array(binaryString.length);
+    for (let i = 0; i < binaryString.length; i++) {
+      bytes[i] = binaryString.charCodeAt(i);
+    }
+    
+    const { data, error } = await supabase.storage
+      .from('question-images')
+      .upload(fileName, bytes, {
+        contentType: 'image/jpeg',
+        upsert: true
+      });
+    
+    if (error) {
+      console.error("Failed to upload image:", error);
+      return null;
+    }
+    
+    const { data: urlData } = supabase.storage
+      .from('question-images')
+      .getPublicUrl(fileName);
+    
+    return urlData?.publicUrl || null;
+  } catch (error) {
+    console.error("Image upload error:", error);
+    return null;
   }
 }
 
@@ -122,7 +163,8 @@ Deno.serve(async (req) => {
       solutionsText: solutionsTextFromClient,
       useOcr,
       questionsImages,
-      solutionsImages
+      solutionsImages,
+      examId
     } = await req.json();
 
     if (!questionsPdf && !questionsTextFromClient && (!questionsImages || questionsImages.length === 0)) {
@@ -132,23 +174,24 @@ Deno.serve(async (req) => {
       });
     }
 
-    console.log("Parsing PDF exam...", {
+    console.log("Parsing PDF exam with enhanced image support...", {
       hasSeparateSolutions,
       useOcr,
       hasQuestionsImages: questionsImages?.length > 0,
       hasSolutionsImages: solutionsImages?.length > 0,
+      examId: examId || 'new',
     });
 
     let questions: Question[] = [];
 
     if (useOcr && questionsImages && questionsImages.length > 0) {
-      // OCR mode: Use Gemini's vision capabilities
-      console.log(`Processing ${questionsImages.length} question pages with OCR`);
+      // Enhanced OCR mode with image-based question analysis
+      console.log(`Processing ${questionsImages.length} question pages with enhanced vision AI`);
       
       // Build image content for the AI
       const imageContent: any[] = [];
       
-      // Add all question page images
+      // Add all question page images with page number tracking
       for (let i = 0; i < questionsImages.length; i++) {
         imageContent.push({
           type: "image_url",
@@ -158,7 +201,7 @@ Deno.serve(async (req) => {
       
       // Add solutions page images if provided
       if (hasSeparateSolutions && solutionsImages && solutionsImages.length > 0) {
-        console.log(`Processing ${solutionsImages.length} solution pages with OCR`);
+        console.log(`Processing ${solutionsImages.length} solution pages with vision AI`);
         for (let i = 0; i < solutionsImages.length; i++) {
           imageContent.push({
             type: "image_url",
@@ -167,35 +210,94 @@ Deno.serve(async (req) => {
         }
       }
 
-      const ocrSystemPrompt = `You are an expert OCR and exam parser. You will receive images of exam pages.
+      const enhancedOcrSystemPrompt = `You are an expert OCR, diagram analysis, and exam parser specialized in engineering, physics, and technical exams. You will receive images of exam pages that may contain:
+- Question text
+- Multiple choice options
+- Diagrams, figures, circuits, graphs, equations
+- Mathematical symbols and formulas
+- Technical drawings with labels and annotations
+
 Your task is to:
-1. Read and transcribe ALL text from the images accurately (OCR)
-2. Extract all questions from the exam
-3. Identify the question type (multiple_choice, true_false, or short_answer)
-4. Extract all answer options for multiple choice questions
-5. Identify the correct answer if shown
-6. Generate a clear, educational explanation for each question
+
+1. **READ AND TRANSCRIBE** all text accurately (OCR)
+
+2. **DETECT AND ANALYZE IMAGES/DIAGRAMS** for each question:
+   - Identify diagrams, figures, circuit diagrams, graphs, force diagrams, etc.
+   - Analyze arrows, labels, symbols, and their relationships
+   - Understand equations and mathematical expressions
+   - Note which page and area contains the relevant image
+
+3. **DECOMPOSE EACH QUESTION** into structured parts:
+   - **context**: Background information or scenario description
+   - **given_info**: Explicitly stated values, conditions, or given data
+   - **required_info**: What the question is asking to find or calculate
+
+4. **EXTRACT ANSWER CHOICES** exactly as they appear in the PDF:
+   - Do NOT invent or modify any answer options
+   - Keep the exact wording from the original PDF
+   - If no options are present, mark as short_answer type
+
+5. **IDENTIFY CORRECT ANSWER** only from the given choices:
+   - Use the image analysis + question context to determine the correct answer
+   - Match logically based on calculations or reasoning
+   - The correct_answer MUST be one of the options if it's multiple choice
+   - If you cannot determine the answer with confidence, leave correct_answer empty
+
+6. **GENERATE EXPLANATION**:
+   - Provide step-by-step reasoning
+   - Reference the diagram/image analysis when relevant
+   - Show calculations if applicable
 
 CRITICAL: Return ONLY a valid JSON array with NO additional text, markdown, or formatting.
-Each question object must have:
-- question_text: string (the full question)
-- question_type: "multiple_choice" | "true_false" | "short_answer"
-- options: string[] (for multiple choice, without A/B/C/D prefixes)
-- correct_answer: string (the correct answer text, not the letter)
-- solution: string (the original solution if visible, or empty string)
-- explanation: string (your AI-generated educational explanation)
+Each question object must have these fields:
+{
+  "question_text": "The full question text",
+  "question_type": "multiple_choice" | "true_false" | "short_answer",
+  "options": ["Option A text", "Option B text", ...],
+  "correct_answer": "The exact text of the correct option",
+  "solution": "Original solution if visible",
+  "explanation": "Step-by-step explanation with diagram analysis",
+  "context": "Background/scenario of the question",
+  "given_info": "Given values and conditions",
+  "required_info": "What needs to be found",
+  "image_analysis": "Description of relevant diagram/figure and what it shows",
+  "has_image": true | false,
+  "image_page": 1 (page number where the relevant image is, 1-indexed)
+}
 
-Example output format:
-[{"question_text":"What is 2+2?","question_type":"multiple_choice","options":["3","4","5","6"],"correct_answer":"4","solution":"","explanation":"2+2=4 because..."}]`;
+Example output:
+[{
+  "question_text": "A circuit contains a 10Ω resistor and a 5V battery. Calculate the current.",
+  "question_type": "multiple_choice",
+  "options": ["0.5 A", "1.0 A", "2.0 A", "5.0 A"],
+  "correct_answer": "0.5 A",
+  "solution": "",
+  "explanation": "Using Ohm's law I = V/R = 5V/10Ω = 0.5A. The diagram shows a simple series circuit with a battery and resistor connected.",
+  "context": "A simple DC circuit analysis problem",
+  "given_info": "Resistance R = 10Ω, Voltage V = 5V",
+  "required_info": "Calculate the current flowing through the circuit",
+  "image_analysis": "Circuit diagram showing a 5V battery connected in series with a 10Ω resistor. Current direction is indicated by an arrow.",
+  "has_image": true,
+  "image_page": 1
+}]`;
 
-      let ocrUserPrompt = `Please analyze these exam page images and extract all questions. `;
+      let ocrUserPrompt = `Analyze these exam page images and extract ALL questions with their diagrams and images. `;
       if (hasSeparateSolutions && solutionsImages && solutionsImages.length > 0) {
         ocrUserPrompt += `The first ${questionsImages.length} images are question pages, and the remaining ${solutionsImages.length} images are solution pages. Match solutions to questions. `;
       }
-      ocrUserPrompt += `Return ONLY the JSON array.`;
+      ocrUserPrompt += `
+For each question:
+1. Extract the exact question text and all answer options as they appear
+2. Analyze any diagrams, figures, or images associated with the question
+3. Decompose into context/given/required
+4. Determine the correct answer ONLY from the given options
+5. Generate a detailed explanation
 
-      console.log("Sending images to AI for OCR parsing...");
+Return ONLY the JSON array.`;
 
+      console.log("Sending images to AI for enhanced vision parsing...");
+
+      // Use a more capable model for complex image analysis
       const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
         method: "POST",
         headers: {
@@ -203,9 +305,9 @@ Example output format:
           "Authorization": `Bearer ${Deno.env.get("LOVABLE_API_KEY")}`,
         },
         body: JSON.stringify({
-          model: "google/gemini-2.5-flash",
+          model: "google/gemini-2.5-pro", // Use Pro for better vision understanding
           messages: [
-            { role: "system", content: ocrSystemPrompt },
+            { role: "system", content: enhancedOcrSystemPrompt },
             { 
               role: "user", 
               content: [
@@ -214,7 +316,7 @@ Example output format:
               ]
             }
           ],
-          temperature: 0.3,
+          temperature: 0.2, // Lower temperature for more accurate extraction
         }),
       });
 
@@ -239,13 +341,42 @@ Example output format:
       const aiResponse = await response.json();
       const content = aiResponse.choices?.[0]?.message?.content || "";
 
-      console.log("OCR AI response received, length:", content.length);
-      console.log("OCR AI response preview:", content.substring(0, 500));
+      console.log("Enhanced vision AI response received, length:", content.length);
+      console.log("AI response preview:", content.substring(0, 800));
 
-      questions = parseQuestionsFromAIResponse(content);
+      const parsedQuestions = parseQuestionsFromAIResponse(content);
+
+      // Process questions with images - upload to storage and attach URLs
+      for (let i = 0; i < parsedQuestions.length; i++) {
+        const q = parsedQuestions[i] as any;
+        
+        // If question has an associated image, upload the page image
+        if (q.has_image && q.image_page && questionsImages[q.image_page - 1]) {
+          const imageIndex = q.image_page - 1;
+          const tempExamId = examId || `temp-${user.id}-${Date.now()}`;
+          
+          const imageUrl = await uploadImageToStorage(
+            supabaseClient,
+            questionsImages[imageIndex],
+            tempExamId,
+            i
+          );
+          
+          if (imageUrl) {
+            parsedQuestions[i].image_url = imageUrl;
+            console.log(`Uploaded image for question ${i + 1}: ${imageUrl}`);
+          }
+        }
+        
+        // Clean up temporary fields
+        delete (parsedQuestions[i] as any).has_image;
+        delete (parsedQuestions[i] as any).image_page;
+      }
+
+      questions = parsedQuestions;
 
     } else {
-      // Text-based parsing (original flow)
+      // Text-based parsing (original flow with enhancements)
       const questionsText = questionsTextFromClient
         ? String(questionsTextFromClient)
         : await extractTextFromPdf(questionsPdf);
@@ -267,29 +398,39 @@ Example output format:
         }
       }
 
-      const systemPrompt = `You are an expert exam parser and educational content creator. Your task is to:
-1. Extract all questions from the provided text exactly as they appear
-2. Identify the question type (multiple_choice, true_false, or short_answer)
-3. Extract all answer options for multiple choice questions
-4. Identify the correct answer from the solutions provided
-5. Extract the solution/working if provided
-6. Generate a clear, educational explanation for each question that helps students understand:
-   - Why the correct answer is right
-   - Why other options are wrong (for multiple choice)
-   - The key concepts being tested
-   - Any helpful tips or mnemonics
+      const systemPrompt = `You are an expert exam parser for engineering and physics exams. Your task is to:
 
-CRITICAL: Return ONLY a valid JSON array with NO additional text, markdown, or formatting.
-Each question object must have:
-- question_text: string (the full question)
-- question_type: "multiple_choice" | "true_false" | "short_answer"
-- options: string[] (for multiple choice, without A/B/C/D prefixes)
-- correct_answer: string (the correct answer text, not the letter)
-- solution: string (the original solution from PDF if available, or empty string)
-- explanation: string (your AI-generated educational explanation)
+1. **EXTRACT QUESTIONS** exactly as they appear in the text
 
-Example output format:
-[{"question_text":"What is 2+2?","question_type":"multiple_choice","options":["3","4","5","6"],"correct_answer":"4","solution":"","explanation":"2+2=4 because..."}]`;
+2. **DECOMPOSE EACH QUESTION** into:
+   - **context**: Background information or scenario
+   - **given_info**: Given values, conditions, or data
+   - **required_info**: What needs to be found or answered
+
+3. **EXTRACT ANSWER OPTIONS** exactly as written:
+   - Do NOT invent or modify any options
+   - Keep exact wording from the original
+
+4. **IDENTIFY CORRECT ANSWER** only from the given choices:
+   - Match from solutions if provided
+   - Must be one of the options for multiple choice
+
+5. **GENERATE EXPLANATION**:
+   - Step-by-step reasoning
+   - Reference formulas and concepts
+
+CRITICAL: Return ONLY a valid JSON array. Each question must have:
+{
+  "question_text": "Full question",
+  "question_type": "multiple_choice" | "true_false" | "short_answer",
+  "options": ["Option A", "Option B", ...],
+  "correct_answer": "Exact option text",
+  "solution": "Original solution if available",
+  "explanation": "Step-by-step explanation",
+  "context": "Background/scenario",
+  "given_info": "Given values",
+  "required_info": "What to find"
+}`;
 
       let userPrompt = "";
       if (hasSeparateSolutions && solutionsText) {
@@ -301,13 +442,13 @@ And here are the solutions:
 
 ${solutionsText}
 
-Please extract all questions, match them with their solutions, and generate helpful explanations. Return ONLY the JSON array.`;
+Extract all questions, decompose them, match with solutions, and generate explanations. Return ONLY the JSON array.`;
       } else {
         userPrompt = `Here is the exam text (may include both questions and solutions):
 
 ${questionsText}
 
-Please extract all questions and their solutions (if included), and generate helpful educational explanations for each. Return ONLY the JSON array.`;
+Extract all questions, decompose each into context/given/required, and generate explanations. Return ONLY the JSON array.`;
       }
 
       console.log("Sending to AI for parsing...");
@@ -354,7 +495,6 @@ Please extract all questions and their solutions (if included), and generate hel
 
       questions = parseQuestionsFromAIResponse(content);
 
-      // If no questions could be parsed from text, suggest OCR
       if (questions.length === 0 && (questionsText.length < 50 || questionsText.includes("Unable to extract"))) {
         throw new Error("Could not extract text from PDF. The PDF may be image-based or scanned. Please enable OCR mode and try again.");
       }
@@ -373,9 +513,14 @@ Please extract all questions and their solutions (if included), and generate hel
       solution: q.solution || "",
       explanation: q.explanation || "",
       order_index: i,
+      image_url: q.image_url || undefined,
+      context: q.context || undefined,
+      given_info: q.given_info || undefined,
+      required_info: q.required_info || undefined,
+      image_analysis: q.image_analysis || undefined,
     }));
 
-    console.log(`Successfully parsed ${questions.length} questions from PDF with explanations`);
+    console.log(`Successfully parsed ${questions.length} questions with enhanced structure`);
 
     return new Response(JSON.stringify({ questions }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -395,7 +540,6 @@ function parseQuestionsFromAIResponse(content: string): Question[] {
   let questions: Question[] = [];
   
   try {
-    // Clean up the response - remove markdown code blocks if present
     let cleanContent = content.trim();
     if (cleanContent.startsWith("```json")) {
       cleanContent = cleanContent.slice(7);
@@ -407,12 +551,10 @@ function parseQuestionsFromAIResponse(content: string): Question[] {
     }
     cleanContent = cleanContent.trim();
 
-    // Try to find JSON array in the response
     const jsonMatch = cleanContent.match(/\[[\s\S]*\]/);
     if (jsonMatch) {
       questions = JSON.parse(jsonMatch[0]);
     } else {
-      // Try parsing the whole content as JSON
       questions = JSON.parse(cleanContent);
     }
   } catch (parseError) {
