@@ -9,6 +9,11 @@ export interface Question {
   solution?: string;
   explanation?: string;
   order_index: number;
+  // Enhanced structured fields for image-based questions
+  context?: string;           // Background/context of the question
+  given_info?: string;        // Given information extracted from text/image
+  required_info?: string;     // What is being asked/required to find
+  image_analysis?: string;    // AI analysis of the diagram/image
 }
 
 export interface Exam {
