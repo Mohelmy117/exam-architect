@@ -146,7 +146,7 @@ export default function Auth() {
             <Shield className="h-8 w-8 text-primary" />
           </div>
           <div>
-            <CardTitle className="text-2xl">Welcome to ExamBuilder</CardTitle>
+            <CardTitle className="text-2xl">Welcome to Holooms</CardTitle>
             <CardDescription className="mt-2">
               Sign in to create and take exams
             </CardDescription>

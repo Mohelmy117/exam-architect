@@ -55,7 +55,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
           <div className="flex h-16 items-center justify-between border-b px-4">
             {sidebarOpen && (
               <Link to="/dashboard" className="text-lg font-semibold text-sidebar-foreground">
-                ExamBuilder
+                Holooms
               </Link>
             )}
             <Button
@@ -126,7 +126,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
         <div className="flex h-full flex-col">
           <div className="flex h-16 items-center justify-between border-b px-4">
             <Link to="/dashboard" className="text-lg font-semibold text-sidebar-foreground">
-              ExamBuilder
+              Holooms
             </Link>
             <Button variant="ghost" size="icon" onClick={() => setMobileMenuOpen(false)}>
               <X className="h-5 w-5" />
@@ -188,7 +188,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
           >
             <Menu className="h-5 w-5" />
           </Button>
-          <span className="font-semibold md:hidden">ExamBuilder</span>
+          <span className="font-semibold md:hidden">Holooms</span>
           <div className="ml-auto flex items-center gap-2">
             <ThemeToggle />
           </div>
