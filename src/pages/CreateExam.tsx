@@ -88,6 +88,7 @@ export default function CreateExam() {
           description: exam.description,
           time_limit_minutes: timerEnabled ? exam.time_limit_minutes : null,
           is_published: exam.is_published,
+          solo_mode: exam.solo_mode || false,
           created_by: user?.id,
         })
         .select()
@@ -166,6 +167,17 @@ export default function CreateExam() {
                     id="timer"
                     checked={timerEnabled}
                     onCheckedChange={setTimerEnabled}
+                  />
+                </div>
+                <div className="flex items-center justify-between rounded-lg border p-4">
+                  <div>
+                    <Label htmlFor="solo">Allow me to take this exam privately (Solo mode)</Label>
+                    <p className="text-sm text-muted-foreground">Practice this exam yourself without sharing publicly</p>
+                  </div>
+                  <Switch
+                    id="solo"
+                    checked={exam.solo_mode || false}
+                    onCheckedChange={(checked) => setExam({ ...exam, solo_mode: checked })}
                   />
                 </div>
                 {timerEnabled && (

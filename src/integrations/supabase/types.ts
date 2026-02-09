@@ -65,6 +65,7 @@ export type Database = {
           description: string | null
           id: string
           is_published: boolean | null
+          solo_mode: boolean
           time_limit_minutes: number | null
           title: string
           updated_at: string
@@ -75,6 +76,7 @@ export type Database = {
           description?: string | null
           id?: string
           is_published?: boolean | null
+          solo_mode?: boolean
           time_limit_minutes?: number | null
           title: string
           updated_at?: string
@@ -85,6 +87,7 @@ export type Database = {
           description?: string | null
           id?: string
           is_published?: boolean | null
+          solo_mode?: boolean
           time_limit_minutes?: number | null
           title?: string
           updated_at?: string
@@ -183,26 +186,6 @@ export type Database = {
           order_index: number | null
           question_text: string | null
           question_type: string | null
-        }
-        Insert: {
-          created_at?: string | null
-          exam_id?: string | null
-          id?: string | null
-          image_url?: string | null
-          options?: Json | null
-          order_index?: number | null
-          question_text?: string | null
-          question_type?: string | null
-        }
-        Update: {
-          created_at?: string | null
-          exam_id?: string | null
-          id?: string | null
-          image_url?: string | null
-          options?: Json | null
-          order_index?: number | null
-          question_text?: string | null
-          question_type?: string | null
         }
         Relationships: [
           {
