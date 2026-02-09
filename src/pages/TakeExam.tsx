@@ -82,21 +82,37 @@ export default function TakeExam() {
     const fetchExam = async () => {
       if (!id || !user) return;
 
-      const [examRes, questionsRes] = await Promise.all([
-        supabase.from('exams').select('*').eq('id', id).eq('is_published', true).single(),
-        supabase.from('student_exam_questions').select('*').eq('exam_id', id).order('order_index'),
-      ]);
+      // Fetch exam - allow published exams OR solo_mode exams owned by user
+      const { data: examData, error: examError } = await supabase
+        .from('exams')
+        .select('*')
+        .eq('id', id)
+        .single();
 
-      if (examRes.error || !examRes.data) {
+      if (examError || !examData) {
+        toast.error('Exam not found');
+        navigate('/');
+        return;
+      }
+
+      // Check access: must be published OR solo_mode owned by user
+      const isSoloOwner = examData.solo_mode && examData.created_by === user.id;
+      if (!examData.is_published && !isSoloOwner) {
         toast.error('Exam not found or not published');
         navigate('/');
         return;
       }
 
-      setExam(examRes.data);
+      setExam(examData);
 
-      if (questionsRes.data) {
-        const mapped = questionsRes.data.map((q) => ({
+      const { data: questionsData } = await supabase
+        .from('student_exam_questions')
+        .select('*')
+        .eq('exam_id', id)
+        .order('order_index');
+
+      if (questionsData) {
+        const mapped = questionsData.map((q) => ({
           ...q,
           options: Array.isArray(q.options) ? q.options : [],
         })) as StudentQuestion[];

@@ -18,6 +18,7 @@ export interface Exam {
   created_by?: string;
   time_limit_minutes?: number | null;
   is_published?: boolean;
+  solo_mode?: boolean;
   created_at?: string;
   updated_at?: string;
 }

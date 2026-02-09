@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
-import { Button } from '@/components/ui/button';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import {
   Menu,
@@ -12,8 +11,8 @@ import {
   LogOut,
   Settings,
   BarChart3,
-  PanelLeftClose,
-  PanelLeft,
+  Sun,
+  Moon,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
@@ -47,47 +46,47 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
     navigate('/');
   };
 
+  // Derive page title from current route
+  const getPageTitle = () => {
+    const match = navItems.find((item) => location.pathname === item.to);
+    if (match) return match.label;
+    if (location.pathname.startsWith('/exams/edit')) return 'Edit Exam';
+    if (location.pathname.startsWith('/exams/create')) return 'Create Exam';
+    return 'Dashboard';
+  };
+
   return (
     <TooltipProvider delayDuration={0}>
-      <div className="flex min-h-screen w-full">
+      <div className="flex min-h-screen w-full bg-background">
         {/* Desktop Sidebar */}
         <aside
           className={cn(
             'fixed left-0 top-0 z-40 hidden h-screen flex-col md:flex',
-            'bg-[hsl(var(--sidebar-background))] text-[hsl(var(--sidebar-foreground))]',
+            'bg-sidebar text-sidebar-foreground border-r border-sidebar-border',
             'transition-[width] duration-300 ease-in-out',
             sidebarOpen ? 'w-[260px]' : 'w-[68px]'
           )}
         >
-          {/* Header */}
-          <div
-            className={cn(
-              'flex h-14 items-center shrink-0',
-              sidebarOpen ? 'justify-between px-4' : 'justify-center px-2'
-            )}
-          >
+          {/* Header: Hamburger + Logo */}
+          <div className="flex h-14 items-center gap-3 shrink-0 px-3">
+            <button
+              onClick={() => setSidebarOpen(!sidebarOpen)}
+              className={cn(
+                'flex h-9 w-9 items-center justify-center rounded-lg transition-colors shrink-0',
+                'text-sidebar-foreground/60 hover:text-sidebar-foreground hover:bg-sidebar-accent'
+              )}
+              aria-label="Toggle sidebar"
+            >
+              <Menu className="h-5 w-5" />
+            </button>
             {sidebarOpen && (
               <Link
                 to="/dashboard"
-                className="text-base font-semibold tracking-tight text-[hsl(var(--sidebar-accent-foreground))] transition-opacity duration-200"
+                className="text-base font-semibold tracking-tight text-sidebar-foreground transition-opacity duration-200"
               >
                 Holooms
               </Link>
             )}
-            <button
-              onClick={() => setSidebarOpen(!sidebarOpen)}
-              className={cn(
-                'flex h-9 w-9 items-center justify-center rounded-lg transition-colors',
-                'text-[hsl(var(--sidebar-muted))] hover:text-[hsl(var(--sidebar-accent-foreground))] hover:bg-[hsl(var(--sidebar-accent))]'
-              )}
-              aria-label="Toggle sidebar"
-            >
-              {sidebarOpen ? (
-                <PanelLeftClose className="h-5 w-5" />
-              ) : (
-                <PanelLeft className="h-5 w-5" />
-              )}
-            </button>
           </div>
 
           {/* Nav Items */}
@@ -102,8 +101,8 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
                   className={cn(
                     'group flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors duration-150',
                     isActive
-                      ? 'bg-[hsl(var(--sidebar-accent))] text-[hsl(var(--sidebar-accent-foreground))]'
-                      : 'text-[hsl(var(--sidebar-foreground))] hover:bg-[hsl(var(--sidebar-accent))] hover:text-[hsl(var(--sidebar-accent-foreground))]',
+                      ? 'bg-sidebar-accent text-sidebar-accent-foreground'
+                      : 'text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground',
                     !sidebarOpen && 'justify-center px-0'
                   )}
                 >
@@ -118,10 +117,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
                 return (
                   <Tooltip key={item.to}>
                     <TooltipTrigger asChild>{link}</TooltipTrigger>
-                    <TooltipContent
-                      side="right"
-                      className="bg-[hsl(var(--sidebar-accent))] text-[hsl(var(--sidebar-accent-foreground))] border-[hsl(var(--sidebar-border))]"
-                    >
+                    <TooltipContent side="right">
                       {item.label}
                     </TooltipContent>
                   </Tooltip>
@@ -133,19 +129,23 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
           </nav>
 
           {/* Bottom Section */}
-          <div className="shrink-0 border-t border-[hsl(var(--sidebar-border))] px-2 py-3 space-y-1">
+          <div className="shrink-0 border-t border-sidebar-border px-2 py-3 space-y-1">
             {/* User email */}
-            {sidebarOpen && (
-              <p className="truncate text-xs text-[hsl(var(--sidebar-muted))] px-3 pb-1">
-                {user?.email}
+            {sidebarOpen && user?.email && (
+              <p className="truncate text-xs text-sidebar-foreground/50 px-3 pb-1">
+                {user.email}
               </p>
             )}
 
             {/* Theme Toggle */}
-            <div className={cn('flex items-center rounded-lg px-3 py-1.5', !sidebarOpen && 'justify-center px-0')}>
+            <div className={cn(
+              'flex items-center rounded-lg px-3 py-2 transition-colors',
+              'text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground',
+              !sidebarOpen && 'justify-center px-0'
+            )}>
               <ThemeToggle />
               {sidebarOpen && (
-                <span className="ml-3 text-sm text-[hsl(var(--sidebar-foreground))]">Theme</span>
+                <span className="ml-3 text-sm font-medium">Theme</span>
               )}
             </div>
 
@@ -155,7 +155,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
                 onClick={handleSignOut}
                 className={cn(
                   'flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors duration-150',
-                  'text-[hsl(var(--sidebar-foreground))] hover:bg-[hsl(var(--sidebar-accent))] hover:text-[hsl(var(--sidebar-accent-foreground))]'
+                  'text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground'
                 )}
               >
                 <LogOut className="h-[18px] w-[18px] shrink-0" />
@@ -168,16 +168,13 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
                     onClick={handleSignOut}
                     className={cn(
                       'flex w-full items-center justify-center rounded-lg py-2.5 transition-colors duration-150',
-                      'text-[hsl(var(--sidebar-foreground))] hover:bg-[hsl(var(--sidebar-accent))] hover:text-[hsl(var(--sidebar-accent-foreground))]'
+                      'text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground'
                     )}
                   >
                     <LogOut className="h-[18px] w-[18px]" />
                   </button>
                 </TooltipTrigger>
-                <TooltipContent
-                  side="right"
-                  className="bg-[hsl(var(--sidebar-accent))] text-[hsl(var(--sidebar-accent-foreground))] border-[hsl(var(--sidebar-border))]"
-                >
+                <TooltipContent side="right">
                   Sign Out
                 </TooltipContent>
               </Tooltip>
@@ -198,7 +195,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
         <aside
           className={cn(
             'fixed left-0 top-0 z-50 h-screen w-[280px] md:hidden',
-            'bg-[hsl(var(--sidebar-background))] text-[hsl(var(--sidebar-foreground))]',
+            'bg-sidebar text-sidebar-foreground',
             'transition-transform duration-300 ease-in-out',
             mobileMenuOpen ? 'translate-x-0' : '-translate-x-full'
           )}
@@ -207,13 +204,13 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
             <div className="flex h-14 items-center justify-between px-4">
               <Link
                 to="/dashboard"
-                className="text-base font-semibold tracking-tight text-[hsl(var(--sidebar-accent-foreground))]"
+                className="text-base font-semibold tracking-tight text-sidebar-foreground"
               >
                 Holooms
               </Link>
               <button
                 onClick={() => setMobileMenuOpen(false)}
-                className="flex h-9 w-9 items-center justify-center rounded-lg text-[hsl(var(--sidebar-muted))] hover:text-[hsl(var(--sidebar-accent-foreground))] hover:bg-[hsl(var(--sidebar-accent))] transition-colors"
+                className="flex h-9 w-9 items-center justify-center rounded-lg text-sidebar-foreground/60 hover:text-sidebar-foreground hover:bg-sidebar-accent transition-colors"
               >
                 <X className="h-5 w-5" />
               </button>
@@ -230,8 +227,8 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
                     className={cn(
                       'flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors duration-150',
                       isActive
-                        ? 'bg-[hsl(var(--sidebar-accent))] text-[hsl(var(--sidebar-accent-foreground))]'
-                        : 'text-[hsl(var(--sidebar-foreground))] hover:bg-[hsl(var(--sidebar-accent))] hover:text-[hsl(var(--sidebar-accent-foreground))]'
+                        ? 'bg-sidebar-accent text-sidebar-accent-foreground'
+                        : 'text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground'
                     )}
                   >
                     <item.icon className="h-[18px] w-[18px] shrink-0" />
@@ -241,17 +238,19 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
               })}
             </nav>
 
-            <div className="border-t border-[hsl(var(--sidebar-border))] px-2 py-3 space-y-1">
-              <p className="truncate text-xs text-[hsl(var(--sidebar-muted))] px-3 pb-1">
-                {user?.email}
-              </p>
-              <div className="flex items-center px-3 py-1.5">
+            <div className="border-t border-sidebar-border px-2 py-3 space-y-1">
+              {user?.email && (
+                <p className="truncate text-xs text-sidebar-foreground/50 px-3 pb-1">
+                  {user.email}
+                </p>
+              )}
+              <div className="flex items-center px-3 py-2 rounded-lg text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground transition-colors">
                 <ThemeToggle />
-                <span className="ml-3 text-sm text-[hsl(var(--sidebar-foreground))]">Theme</span>
+                <span className="ml-3 text-sm font-medium">Theme</span>
               </div>
               <button
                 onClick={handleSignOut}
-                className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-[hsl(var(--sidebar-foreground))] hover:bg-[hsl(var(--sidebar-accent))] hover:text-[hsl(var(--sidebar-accent-foreground))] transition-colors duration-150"
+                className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground transition-colors duration-150"
               >
                 <LogOut className="h-[18px] w-[18px] shrink-0" />
                 <span>Sign Out</span>
@@ -267,8 +266,8 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
             sidebarOpen ? 'md:ml-[260px]' : 'md:ml-[68px]'
           )}
         >
-          {/* Mobile header */}
-          <header className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b bg-background px-4 md:hidden">
+          {/* Mobile header - only hamburger + brand */}
+          <header className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b border-border bg-background px-4 md:hidden">
             <button
               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
               className="flex h-9 w-9 items-center justify-center rounded-lg text-foreground hover:bg-muted transition-colors"
