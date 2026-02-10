@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Sparkles, FileUp, BookOpen, Check, ArrowRight } from 'lucide-react';
+import holoomsLogo from '@/assets/holooms-logo.png';
 
 export default function Index() {
   const { user, loading } = useAuth();
@@ -22,12 +23,7 @@ export default function Index() {
       <header className="sticky top-0 z-50 border-b bg-background/80 backdrop-blur-lg">
         <div className="container flex h-16 items-center justify-between">
           <Link to="/" className="flex items-center gap-2">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg gradient-bg">
-              <Sparkles className="h-4 w-4 text-primary-foreground" />
-            </div>
-            <span className="text-lg font-bold tracking-tight text-foreground">
-              Holooms
-            </span>
+            <img src={holoomsLogo} alt="Holooms" className="h-7 object-contain dark:invert" />
           </Link>
           <div className="flex items-center gap-3">
             <Button variant="ghost" size="sm" asChild>
@@ -182,10 +178,7 @@ export default function Index() {
         <div className="container">
           <div className="flex flex-col items-center gap-4 md:flex-row md:justify-between">
             <div className="flex items-center gap-2">
-              <div className="flex h-7 w-7 items-center justify-center rounded-md gradient-bg">
-                <Sparkles className="h-3.5 w-3.5 text-primary-foreground" />
-              </div>
-              <span className="text-sm font-semibold text-foreground">Holooms</span>
+              <img src={holoomsLogo} alt="Holooms" className="h-5 object-contain dark:invert" />
             </div>
             <p className="text-sm text-muted-foreground">
               © {new Date().getFullYear()} Holooms. All rights reserved.
