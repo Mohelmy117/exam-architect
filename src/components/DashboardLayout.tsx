@@ -82,7 +82,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
             </button>
             {sidebarOpen && (
               <Link to="/dashboard">
-                <img src={holoomsLogo} alt="Holooms" className="h-9 w-auto" />
+                <img src={holoomsLogo} alt="Holooms" className="h-12 w-auto" />
               </Link>
             )}
           </div>
@@ -201,7 +201,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
           <div className="flex h-full flex-col">
             <div className="flex h-14 items-center justify-between px-4">
               <Link to="/dashboard">
-                <img src={holoomsLogo} alt="Holooms" className="h-9 w-auto" />
+                <img src={holoomsLogo} alt="Holooms" className="h-12 w-auto" />
               </Link>
               <button
                 onClick={() => setMobileMenuOpen(false)}
@@ -269,7 +269,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
             >
               <Menu className="h-5 w-5" />
             </button>
-            <img src={holoomsLogo} alt="Holooms" className="h-8 w-auto" />
+            <img src={holoomsLogo} alt="Holooms" className="h-10 w-auto" />
           </header>
 
           <div className="p-6">{children}</div>
