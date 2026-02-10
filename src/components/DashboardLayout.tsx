@@ -14,8 +14,8 @@ import {
   Sun,
   Moon,
 } from 'lucide-react';
-import holoomsLogo from '@/assets/holooms-logo.png';
 import { cn } from '@/lib/utils';
+import { HoloomsLogo } from '@/components/HoloomsLogo';
 import {
   Tooltip,
   TooltipContent,
@@ -82,7 +82,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
             </button>
             {sidebarOpen && (
               <Link to="/dashboard">
-                <img src={holoomsLogo} alt="Holooms" className="h-12 w-auto" />
+                <HoloomsLogo className="h-8 w-auto" />
               </Link>
             )}
           </div>
@@ -201,7 +201,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
           <div className="flex h-full flex-col">
             <div className="flex h-14 items-center justify-between px-4">
               <Link to="/dashboard">
-                <img src={holoomsLogo} alt="Holooms" className="h-12 w-auto" />
+                <HoloomsLogo className="h-8 w-auto" />
               </Link>
               <button
                 onClick={() => setMobileMenuOpen(false)}
@@ -269,7 +269,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
             >
               <Menu className="h-5 w-5" />
             </button>
-            <img src={holoomsLogo} alt="Holooms" className="h-10 w-auto" />
+            <HoloomsLogo className="h-7 w-auto" />
           </header>
 
           <div className="p-6">{children}</div>
