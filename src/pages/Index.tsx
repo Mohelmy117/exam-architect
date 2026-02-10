@@ -23,7 +23,7 @@ export default function Index() {
       <header className="sticky top-0 z-50 border-b bg-background/80 backdrop-blur-lg">
         <div className="container flex h-16 items-center justify-between">
           <Link to="/" className="flex items-center">
-            <img src={holoomsLogo} alt="Holooms" className="h-8 w-auto object-contain" />
+            <img src={holoomsLogo} alt="Holooms" className="h-10 w-auto" />
           </Link>
           <div className="flex items-center gap-3">
             <Button variant="ghost" size="sm" asChild>
@@ -178,7 +178,7 @@ export default function Index() {
         <div className="container">
           <div className="flex flex-col items-center gap-4 md:flex-row md:justify-between">
             <div className="flex items-center">
-              <img src={holoomsLogo} alt="Holooms" className="h-6 w-auto object-contain" />
+              <img src={holoomsLogo} alt="Holooms" className="h-8 w-auto" />
             </div>
             <p className="text-sm text-muted-foreground">
               © {new Date().getFullYear()} Holooms. All rights reserved.
