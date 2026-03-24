@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
@@ -21,10 +21,10 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Exam, Question } from '@/types/exam';
 import { toast } from 'sonner';
-import { Loader2, CheckCircle, AlertCircle, Lightbulb, ChevronDown, CheckCircle2, XCircle, FileText, Play } from 'lucide-react';
+import { Loader2, CheckCircle, AlertCircle, Lightbulb, ChevronDown, CheckCircle2, XCircle, Play, LogOut, ChevronLeft, ChevronRight, ShieldAlert } from 'lucide-react';
 import { Progress } from '@/components/ui/progress';
+import { cn } from '@/lib/utils';
 
-// Generate or retrieve session ID for tracking
 const getSessionId = (): string => {
   let sessionId = sessionStorage.getItem('exam_session_id');
   if (!sessionId) {
@@ -34,7 +34,6 @@ const getSessionId = (): string => {
   return sessionId;
 };
 
-// Type for questions during exam (without answers)
 interface StudentQuestion {
   id: string;
   exam_id: string;
@@ -50,7 +49,7 @@ export default function TakeExam() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { user, loading: authLoading } = useAuth();
-  
+
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [exam, setExam] = useState<Exam | null>(null);
@@ -61,28 +60,30 @@ export default function TakeExam() {
   const [sessionId] = useState<string>(getSessionId);
   const [startedAt, setStartedAt] = useState<Date | null>(null);
   const [submitted, setSubmitted] = useState(false);
+  const [alreadySubmitted, setAlreadySubmitted] = useState(false);
   const [score, setScore] = useState<number | null>(null);
   const [correctCount, setCorrectCount] = useState<number>(0);
   const [openExplanations, setOpenExplanations] = useState<Record<string, boolean>>({});
   const [showSubmitDialog, setShowSubmitDialog] = useState(false);
-  const [showSummary, setShowSummary] = useState(false);
+  const [showExitDialog, setShowExitDialog] = useState(false);
   const [started, setStarted] = useState(false);
+  const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
+  const [animDirection, setAnimDirection] = useState<'left' | 'right' | null>(null);
+  const examActiveRef = useRef(false);
 
   // Redirect to login if not authenticated
   useEffect(() => {
     if (!authLoading && !user) {
-      // Redirect to auth with return URL
       const returnUrl = `/exam/${id}`;
       navigate(`/auth?redirect=${encodeURIComponent(returnUrl)}`, { replace: true });
     }
   }, [authLoading, user, navigate, id]);
 
-  // Fetch exam data when authenticated
+  // Fetch exam data
   useEffect(() => {
     const fetchExam = async () => {
       if (!id || !user) return;
 
-      // Fetch exam - allow published exams OR solo_mode exams owned by user
       const { data: examData, error: examError } = await supabase
         .from('exams')
         .select('*')
@@ -95,7 +96,6 @@ export default function TakeExam() {
         return;
       }
 
-      // Check access: must be published OR solo_mode owned by user
       const isSoloOwner = examData.solo_mode && examData.created_by === user.id;
       if (!examData.is_published && !isSoloOwner) {
         toast.error('Exam not found or not published');
@@ -104,6 +104,20 @@ export default function TakeExam() {
       }
 
       setExam(examData);
+
+      // Check if user already has a submitted attempt for this exam
+      const { data: existingAttempts } = await supabase
+        .from('exam_attempts')
+        .select('id, submitted_at')
+        .eq('exam_id', id)
+        .eq('session_id', getSessionId())
+        .not('submitted_at', 'is', null);
+
+      if (existingAttempts && existingAttempts.length > 0) {
+        setAlreadySubmitted(true);
+        setLoading(false);
+        return;
+      }
 
       const { data: questionsData } = await supabase
         .from('student_exam_questions')
@@ -122,48 +136,58 @@ export default function TakeExam() {
       setLoading(false);
     };
 
-    if (user) {
-      fetchExam();
-    }
+    if (user) fetchExam();
   }, [id, navigate, user]);
 
-  // Get user display name and email from Google profile
+  // beforeunload protection
+  useEffect(() => {
+    if (!examActiveRef.current) return;
+
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = 'Leaving this page will submit your exam.';
+      return e.returnValue;
+    };
+
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, [started, submitted]);
+
+  // Track exam active state
+  useEffect(() => {
+    examActiveRef.current = started && !submitted;
+  }, [started, submitted]);
+
   const getUserDisplayName = () => {
     if (!user) return 'Student';
     return user.user_metadata?.full_name || user.user_metadata?.name || user.email?.split('@')[0] || 'Student';
   };
 
-  const getUserEmail = () => {
-    return user?.email || '';
-  };
+  const getUserEmail = () => user?.email || '';
 
   const startExam = async () => {
     if (!exam || !user) return;
 
-    const studentName = getUserDisplayName();
-    const studentEmail = getUserEmail();
-
     const { data, error } = await supabase.rpc('start_exam_attempt', {
-      p_exam_id: exam.id,
+      p_exam_id: exam.id!,
       p_session_id: sessionId,
-      p_student_name: studentName,
-      p_student_email: studentEmail,
+      p_student_name: getUserDisplayName(),
+      p_student_email: getUserEmail(),
     });
 
     if (error || !data || data.length === 0) {
       toast.error('Failed to start exam');
-      console.error('Start exam error:', error);
       return;
     }
 
     setAttemptId(data[0].attempt_id);
     setStartedAt(new Date(data[0].started_at));
     setStarted(true);
+    examActiveRef.current = true;
   };
 
   const submitExam = useCallback(async () => {
     if (!attemptId || submitting) return;
-
     setSubmitting(true);
 
     const { data, error } = await supabase.rpc('submit_exam_attempt', {
@@ -174,7 +198,6 @@ export default function TakeExam() {
 
     if (error || !data || data.length === 0) {
       toast.error('Failed to submit exam');
-      console.error('Submit exam error:', error);
       setSubmitting(false);
       return;
     }
@@ -186,7 +209,7 @@ export default function TakeExam() {
     const { data: fullQuestionData } = await supabase
       .from('questions')
       .select('*')
-      .eq('exam_id', exam?.id)
+      .eq('exam_id', exam?.id!)
       .order('order_index');
 
     if (fullQuestionData) {
@@ -196,6 +219,7 @@ export default function TakeExam() {
       })) as Question[]);
     }
 
+    examActiveRef.current = false;
     setSubmitted(true);
     setSubmitting(false);
   }, [attemptId, answers, submitting, sessionId, exam?.id]);
@@ -205,21 +229,30 @@ export default function TakeExam() {
     submitExam();
   }, [submitExam]);
 
+  const handleExitExam = () => setShowExitDialog(true);
+
+  const confirmExit = async () => {
+    setShowExitDialog(false);
+    await submitExam();
+  };
+
   const toggleExplanation = (questionId: string) => {
-    setOpenExplanations(prev => ({
-      ...prev,
-      [questionId]: !prev[questionId]
-    }));
+    setOpenExplanations(prev => ({ ...prev, [questionId]: !prev[questionId] }));
   };
 
-  const isCorrect = (questionId: string, correctAnswer: string) => {
-    return answers[questionId] === correctAnswer;
+  const isCorrect = (questionId: string, correctAnswer: string) => answers[questionId] === correctAnswer;
+
+  const goToQuestion = (index: number) => {
+    if (index < 0 || index >= questions.length) return;
+    setAnimDirection(index > currentQuestionIndex ? 'right' : 'left');
+    setCurrentQuestionIndex(index);
+    setTimeout(() => setAnimDirection(null), 300);
   };
 
-  // Show loading while checking auth
+  // Loading states
   if (authLoading || (!user && !authLoading)) {
     return (
-      <div className="flex min-h-screen items-center justify-center">
+      <div className="flex min-h-screen items-center justify-center bg-background">
         <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
       </div>
     );
@@ -227,15 +260,35 @@ export default function TakeExam() {
 
   if (loading) {
     return (
-      <div className="flex min-h-screen items-center justify-center">
+      <div className="flex min-h-screen items-center justify-center bg-background">
         <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  // Already submitted block
+  if (alreadySubmitted) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background p-4">
+        <Card className="w-full max-w-md border-destructive/30">
+          <CardContent className="py-12 text-center space-y-4">
+            <ShieldAlert className="mx-auto h-16 w-16 text-destructive" />
+            <h2 className="text-xl font-bold">Attempt Already Submitted</h2>
+            <p className="text-muted-foreground">
+              This exam attempt has already been submitted. You cannot re-enter this attempt.
+            </p>
+            <Button onClick={() => navigate('/')} variant="outline" className="mt-4">
+              Go Home
+            </Button>
+          </CardContent>
+        </Card>
       </div>
     );
   }
 
   if (!exam) {
     return (
-      <div className="flex min-h-screen items-center justify-center">
+      <div className="flex min-h-screen items-center justify-center bg-background">
         <Card className="w-full max-w-md">
           <CardContent className="py-12 text-center">
             <AlertCircle className="mx-auto h-12 w-12 text-destructive" />
@@ -246,14 +299,14 @@ export default function TakeExam() {
     );
   }
 
-  // Results view after submission
+  // ─── Results View ─────────────────────────────────────────
   if (submitted) {
     return (
       <div className="min-h-screen bg-background">
         <header className="sticky top-0 z-50 border-b bg-background/95 backdrop-blur">
           <div className="container flex h-16 items-center justify-between">
-            <h1 className="text-lg font-semibold">{exam.title} - Results</h1>
-            <div className="rounded-lg bg-primary px-4 py-2 text-primary-foreground">
+            <h1 className="text-lg font-semibold">{exam.title} — Results</h1>
+            <div className="rounded-lg bg-primary px-4 py-2 text-primary-foreground font-semibold">
               Score: {score}%
             </div>
           </div>
@@ -265,9 +318,7 @@ export default function TakeExam() {
               <CardContent className="py-8 text-center">
                 <CheckCircle className="mx-auto h-16 w-16 text-primary" />
                 <h2 className="mt-4 text-2xl font-bold">Exam Completed!</h2>
-                <p className="mt-2 text-muted-foreground">
-                  Review your answers and explanations below
-                </p>
+                <p className="mt-2 text-muted-foreground">Review your answers and explanations below</p>
                 <div className="mt-6 inline-flex items-center gap-4 rounded-lg bg-background p-4 shadow-sm">
                   <div className="text-center">
                     <p className="text-sm text-muted-foreground">Your Score</p>
@@ -276,53 +327,48 @@ export default function TakeExam() {
                   <div className="h-12 w-px bg-border" />
                   <div className="text-center">
                     <p className="text-sm text-muted-foreground">Correct</p>
-                    <p className="text-3xl font-bold">
-                      {correctCount}/{fullQuestions.length}
-                    </p>
+                    <p className="text-3xl font-bold">{correctCount}/{fullQuestions.length}</p>
                   </div>
                 </div>
+                <Button onClick={() => navigate('/')} variant="outline" className="mt-6">
+                  Go Home
+                </Button>
               </CardContent>
             </Card>
 
             {fullQuestions.map((question, index) => {
               const correct = isCorrect(question.id!, question.correct_answer || '');
               const hasExplanation = question.explanation || question.solution;
-              
+
               return (
-                <Card 
-                  key={question.id} 
-                  className={`transition-all ${correct ? 'border-green-500/30 bg-green-50/50 dark:bg-green-950/20' : 'border-red-500/30 bg-red-50/50 dark:bg-red-950/20'}`}
+                <Card
+                  key={question.id}
+                  className={cn('transition-all', correct
+                    ? 'border-green-500/30 bg-green-50/50 dark:bg-green-950/20'
+                    : 'border-red-500/30 bg-red-50/50 dark:bg-red-950/20'
+                  )}
                 >
                   <CardHeader className="pb-3">
                     <div className="flex items-start justify-between">
                       <CardTitle className="flex items-center gap-2 text-base">
-                        {correct ? (
-                          <CheckCircle2 className="h-5 w-5 text-green-600" />
-                        ) : (
-                          <XCircle className="h-5 w-5 text-red-600" />
-                        )}
+                        {correct ? <CheckCircle2 className="h-5 w-5 text-green-600" /> : <XCircle className="h-5 w-5 text-red-600" />}
                         Question {index + 1}
                       </CardTitle>
-                      <span className={`rounded-full px-3 py-1 text-xs font-medium ${correct ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-100' : 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-100'}`}>
+                      <span className={cn('rounded-full px-3 py-1 text-xs font-medium', correct
+                        ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-100'
+                        : 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-100'
+                      )}>
                         {correct ? 'Correct' : 'Incorrect'}
                       </span>
                     </div>
                   </CardHeader>
                   <CardContent className="space-y-4">
                     <p className="text-lg">{question.question_text}</p>
-
-                    {question.image_url && (
-                      <img
-                        src={question.image_url}
-                        alt="Question"
-                        className="max-h-64 rounded-lg object-contain"
-                      />
-                    )}
-
+                    {question.image_url && <img src={question.image_url} alt="Question" className="max-h-64 rounded-lg object-contain" />}
                     <div className="space-y-2 rounded-lg bg-background/80 p-4">
                       <div className="flex items-center gap-2">
                         <span className="text-sm font-medium text-muted-foreground">Your answer:</span>
-                        <span className={`font-medium ${correct ? 'text-green-600' : 'text-red-600'}`}>
+                        <span className={cn('font-medium', correct ? 'text-green-600' : 'text-red-600')}>
                           {answers[question.id!] || 'No answer'}
                         </span>
                       </div>
@@ -333,42 +379,26 @@ export default function TakeExam() {
                         </div>
                       )}
                     </div>
-
                     {hasExplanation && (
-                      <Collapsible
-                        open={openExplanations[question.id!]}
-                        onOpenChange={() => toggleExplanation(question.id!)}
-                      >
+                      <Collapsible open={openExplanations[question.id!]} onOpenChange={() => toggleExplanation(question.id!)}>
                         <CollapsibleTrigger asChild>
                           <Button variant="outline" className="w-full justify-between">
-                            <span className="flex items-center gap-2">
-                              <Lightbulb className="h-4 w-4 text-yellow-500" />
-                              Explanation
-                            </span>
-                            <ChevronDown className={`h-4 w-4 transition-transform ${openExplanations[question.id!] ? 'rotate-180' : ''}`} />
+                            <span className="flex items-center gap-2"><Lightbulb className="h-4 w-4 text-yellow-500" /> Explanation</span>
+                            <ChevronDown className={cn('h-4 w-4 transition-transform', openExplanations[question.id!] && 'rotate-180')} />
                           </Button>
                         </CollapsibleTrigger>
                         <CollapsibleContent className="mt-3">
                           <div className="rounded-lg border bg-yellow-50/50 p-4 dark:bg-yellow-950/20">
                             {question.explanation && (
                               <div className="space-y-2">
-                                <h4 className="flex items-center gap-2 font-semibold text-yellow-800 dark:text-yellow-200">
-                                  <Lightbulb className="h-4 w-4" />
-                                  AI Explanation
-                                </h4>
-                                <p className="text-sm text-yellow-900 dark:text-yellow-100 whitespace-pre-wrap">
-                                  {question.explanation}
-                                </p>
+                                <h4 className="flex items-center gap-2 font-semibold text-yellow-800 dark:text-yellow-200"><Lightbulb className="h-4 w-4" /> AI Explanation</h4>
+                                <p className="text-sm text-yellow-900 dark:text-yellow-100 whitespace-pre-wrap">{question.explanation}</p>
                               </div>
                             )}
                             {question.solution && (
-                              <div className={`space-y-2 ${question.explanation ? 'mt-4 border-t border-yellow-200 pt-4 dark:border-yellow-800' : ''}`}>
-                                <h4 className="font-semibold text-yellow-800 dark:text-yellow-200">
-                                  Solution from Exam
-                                </h4>
-                                <p className="text-sm text-yellow-900 dark:text-yellow-100 whitespace-pre-wrap">
-                                  {question.solution}
-                                </p>
+                              <div className={cn('space-y-2', question.explanation && 'mt-4 border-t border-yellow-200 pt-4 dark:border-yellow-800')}>
+                                <h4 className="font-semibold text-yellow-800 dark:text-yellow-200">Solution</h4>
+                                <p className="text-sm text-yellow-900 dark:text-yellow-100 whitespace-pre-wrap">{question.solution}</p>
                               </div>
                             )}
                           </div>
@@ -385,7 +415,7 @@ export default function TakeExam() {
     );
   }
 
-  // Pre-exam start screen - show user info and start button
+  // ─── Pre-exam Start Screen ────────────────────────────────
   if (!started) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background p-4">
@@ -401,8 +431,6 @@ export default function TakeExam() {
                 <p className="text-2xl font-bold">{exam.time_limit_minutes} minutes</p>
               </div>
             )}
-
-            {/* Show authenticated user info */}
             <div className="rounded-lg border bg-muted/30 p-4 space-y-2">
               <p className="text-sm font-medium text-foreground">Signed in as:</p>
               <div className="flex items-center gap-3">
@@ -415,19 +443,15 @@ export default function TakeExam() {
                 </div>
               </div>
             </div>
-
             <div className="rounded-lg bg-primary/5 border border-primary/20 p-4">
               <div className="flex items-start gap-3">
                 <CheckCircle className="h-5 w-5 text-primary mt-0.5" />
                 <div className="text-sm">
                   <p className="font-medium text-foreground">Ready to begin</p>
-                  <p className="text-muted-foreground">
-                    {questions.length} questions • Your progress will be saved automatically
-                  </p>
+                  <p className="text-muted-foreground">{questions.length} questions • Your progress will be saved automatically</p>
                 </div>
               </div>
             </div>
-
             <Button onClick={startExam} className="w-full h-12 text-base" size="lg">
               <Play className="mr-2 h-5 w-5" />
               Start Exam
@@ -438,217 +462,195 @@ export default function TakeExam() {
     );
   }
 
-  // Active exam view
+  // ─── Active Exam — Immersive Mode ─────────────────────────
   const answeredCount = Object.keys(answers).filter(key => answers[key]?.trim()).length;
-  const unansweredCount = questions.length - answeredCount;
   const progressPercent = questions.length > 0 ? (answeredCount / questions.length) * 100 : 0;
+  const currentQuestion = questions[currentQuestionIndex];
 
-  const scrollToQuestion = (questionId: string) => {
-    const element = document.getElementById(`question-${questionId}`);
-    if (element) {
-      element.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    }
-  };
-
-  const handleSubmitClick = () => {
-    setShowSummary(true);
-  };
-
-  const handleFinalSubmit = () => {
-    if (unansweredCount > 0) {
-      setShowSubmitDialog(true);
-    } else {
-      submitExam();
-    }
-  };
-
-  const goBackToExam = (questionId?: string) => {
-    setShowSummary(false);
-    if (questionId) {
-      setTimeout(() => scrollToQuestion(questionId), 100);
-    }
-  };
-
-  // Summary view
-  if (showSummary) {
-    return (
-      <div className="min-h-screen bg-background">
-        <header className="sticky top-0 z-50 border-b bg-background/95 backdrop-blur">
-          <div className="container flex h-16 items-center justify-between">
-            <h1 className="text-lg font-semibold">{exam.title} - Review</h1>
-            {exam.time_limit_minutes && startedAt && (
-              <ExamTimer
-                timeLimitMinutes={exam.time_limit_minutes}
-                startedAt={startedAt}
-                onTimeUp={handleTimeUp}
-              />
-            )}
-          </div>
-        </header>
-
-        <main className="container py-8">
-          <div className="mx-auto max-w-2xl space-y-6">
-            <Card>
-              <CardHeader>
-                <CardTitle>Review Your Answers</CardTitle>
-                <CardDescription>
-                  {answeredCount} of {questions.length} questions answered
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <Progress value={progressPercent} className="h-3" />
-                
-                <div className="grid gap-2">
-                  {questions.map((q, index) => {
-                    const hasAnswer = answers[q.id]?.trim();
-                    return (
-                      <button
-                        key={q.id}
-                        onClick={() => goBackToExam(q.id)}
-                        className={`flex items-center justify-between rounded-lg border p-3 text-left transition-colors hover:bg-muted/50 ${
-                          hasAnswer ? 'border-green-500/30 bg-green-50/30 dark:bg-green-950/10' : 'border-orange-500/30 bg-orange-50/30 dark:bg-orange-950/10'
-                        }`}
-                      >
-                        <span className="font-medium">Question {index + 1}</span>
-                        <span className={`text-sm ${hasAnswer ? 'text-green-600' : 'text-orange-600'}`}>
-                          {hasAnswer ? 'Answered' : 'Unanswered'}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-
-                <div className="flex gap-3 pt-4">
-                  <Button variant="outline" onClick={() => goBackToExam()} className="flex-1">
-                    Back to Exam
-                  </Button>
-                  <Button onClick={handleFinalSubmit} disabled={submitting} className="flex-1">
-                    {submitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                    Submit Exam
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-        </main>
-
-        <AlertDialog open={showSubmitDialog} onOpenChange={setShowSubmitDialog}>
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>Submit with unanswered questions?</AlertDialogTitle>
-              <AlertDialogDescription>
-                You have {unansweredCount} unanswered question{unansweredCount > 1 ? 's' : ''}. 
-                Are you sure you want to submit?
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel>Go Back</AlertDialogCancel>
-              <AlertDialogAction onClick={submitExam}>Submit Anyway</AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
-      </div>
-    );
-  }
-
-  // Main exam taking view
   return (
-    <div className="min-h-screen bg-background">
-      <header className="sticky top-0 z-50 border-b bg-background/95 backdrop-blur">
-        <div className="container space-y-3 py-3">
-          <div className="flex items-center justify-between">
-            <h1 className="text-lg font-semibold">{exam.title}</h1>
-            <div className="flex items-center gap-4">
-              {exam.time_limit_minutes && startedAt && (
-                <ExamTimer
-                  timeLimitMinutes={exam.time_limit_minutes}
-                  startedAt={startedAt}
-                  onTimeUp={handleTimeUp}
-                />
-              )}
-              <Button onClick={handleSubmitClick} disabled={submitting}>
-                <FileText className="mr-2 h-4 w-4" />
-                Review & Submit
-              </Button>
-            </div>
-          </div>
-          
-          <div className="space-y-2">
-            <div className="flex items-center justify-between text-sm">
-              <span className="text-muted-foreground">
-                Progress: {answeredCount} of {questions.length} answered
-              </span>
-              <span className="font-medium text-primary">{Math.round(progressPercent)}%</span>
-            </div>
-            <Progress value={progressPercent} className="h-2" />
-            
-            <div className="flex flex-wrap gap-1.5 pt-1">
-              {questions.map((q, index) => {
-                const hasAnswer = answers[q.id]?.trim();
-                return (
-                  <button
-                    key={q.id}
-                    onClick={() => scrollToQuestion(q.id)}
-                    className={`flex h-8 w-8 items-center justify-center rounded text-xs font-medium transition-colors ${
-                      hasAnswer
-                        ? 'bg-primary text-primary-foreground'
-                        : 'bg-muted text-muted-foreground hover:bg-muted/80'
-                    }`}
-                  >
-                    {index + 1}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
+    <div className="fixed inset-0 z-50 flex flex-col bg-gradient-to-br from-background via-background to-accent/30">
+      {/* Subtle background pattern */}
+      <div className="pointer-events-none absolute inset-0 opacity-[0.02]" style={{ backgroundImage: 'radial-gradient(circle at 1px 1px, currentColor 1px, transparent 0)', backgroundSize: '40px 40px' }} />
+
+      {/* Top Bar */}
+      <header className="relative z-10 flex items-center justify-between border-b bg-card/80 backdrop-blur-xl px-4 py-3 md:px-6">
+        <div className="flex items-center gap-3">
+          <span className="text-sm font-medium text-muted-foreground hidden sm:inline">{exam.title}</span>
+          <span className="rounded-full bg-primary/10 px-3 py-1 text-xs font-semibold text-primary">
+            Question {currentQuestionIndex + 1} of {questions.length}
+          </span>
+        </div>
+
+        <div className="flex items-center gap-3">
+          {exam.time_limit_minutes && startedAt && (
+            <ExamTimer timeLimitMinutes={exam.time_limit_minutes} startedAt={startedAt} onTimeUp={handleTimeUp} />
+          )}
+          <Button variant="destructive" size="sm" onClick={handleExitExam}>
+            <LogOut className="mr-2 h-4 w-4" />
+            Exit Exam
+          </Button>
         </div>
       </header>
 
-      <main className="container py-8">
-        <div className="mx-auto max-w-3xl space-y-6">
-          {questions.map((question, index) => (
-            <Card key={question.id} id={`question-${question.id}`} className="scroll-mt-32">
-              <CardHeader>
-                <CardTitle className="text-base">Question {index + 1}</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <p className="text-lg">{question.question_text}</p>
+      {/* Progress Bar */}
+      <div className="relative z-10 px-4 md:px-6 pt-2">
+        <Progress value={progressPercent} className="h-1.5" />
+      </div>
 
-                {question.image_url && (
-                  <img
-                    src={question.image_url}
-                    alt="Question"
-                    className="max-h-64 rounded-lg object-contain"
-                  />
+      {/* Question Area */}
+      <main className="relative z-10 flex flex-1 flex-col items-center justify-center overflow-y-auto px-4 py-6">
+        <div
+          className={cn(
+            'w-full max-w-2xl transition-all duration-300 ease-out',
+            animDirection === 'right' && 'animate-fade-in',
+            animDirection === 'left' && 'animate-fade-in',
+          )}
+          key={currentQuestionIndex}
+        >
+          <Card className="border bg-card/90 backdrop-blur-sm shadow-xl">
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-base text-muted-foreground">
+                  Question {currentQuestionIndex + 1}
+                </CardTitle>
+                {answers[currentQuestion?.id]?.trim() && (
+                  <span className="rounded-full bg-primary/10 px-2.5 py-0.5 text-xs font-medium text-primary">
+                    Answered
+                  </span>
                 )}
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <p className="text-lg font-medium leading-relaxed">{currentQuestion?.question_text}</p>
 
-                {question.question_type === 'multiple_choice' || question.question_type === 'true_false' ? (
-                  <RadioGroup
-                    value={answers[question.id] || ''}
-                    onValueChange={(value) => setAnswers(prev => ({ ...prev, [question.id]: value }))}
-                  >
-                    {question.options.map((option, optIndex) => (
-                      <div key={optIndex} className="flex items-center space-x-2">
-                        <RadioGroupItem value={option} id={`${question.id}-${optIndex}`} />
-                        <Label htmlFor={`${question.id}-${optIndex}`} className="cursor-pointer">
-                          {option}
-                        </Label>
-                      </div>
-                    ))}
-                  </RadioGroup>
-                ) : (
-                  <Textarea
-                    placeholder="Type your answer here..."
-                    value={answers[question.id] || ''}
-                    onChange={(e) => setAnswers(prev => ({ ...prev, [question.id]: e.target.value }))}
-                    rows={4}
-                  />
-                )}
-              </CardContent>
-            </Card>
-          ))}
+              {currentQuestion?.image_url && (
+                <img src={currentQuestion.image_url} alt="Question" className="max-h-64 rounded-lg object-contain" />
+              )}
+
+              {currentQuestion?.question_type === 'multiple_choice' || currentQuestion?.question_type === 'true_false' ? (
+                <RadioGroup
+                  value={answers[currentQuestion.id] || ''}
+                  onValueChange={(value) => setAnswers(prev => ({ ...prev, [currentQuestion.id]: value }))}
+                  className="space-y-3"
+                >
+                  {currentQuestion.options.map((option, optIndex) => (
+                    <div
+                      key={optIndex}
+                      className={cn(
+                        'flex items-center space-x-3 rounded-lg border p-4 transition-colors cursor-pointer hover:bg-accent/50',
+                        answers[currentQuestion.id] === option && 'border-primary bg-primary/5'
+                      )}
+                      onClick={() => setAnswers(prev => ({ ...prev, [currentQuestion.id]: option }))}
+                    >
+                      <RadioGroupItem value={option} id={`${currentQuestion.id}-${optIndex}`} />
+                      <Label htmlFor={`${currentQuestion.id}-${optIndex}`} className="cursor-pointer flex-1 text-base">
+                        {option}
+                      </Label>
+                    </div>
+                  ))}
+                </RadioGroup>
+              ) : (
+                <Textarea
+                  placeholder="Type your answer here..."
+                  value={answers[currentQuestion?.id] || ''}
+                  onChange={(e) => setAnswers(prev => ({ ...prev, [currentQuestion.id]: e.target.value }))}
+                  rows={4}
+                  className="text-base"
+                />
+              )}
+            </CardContent>
+          </Card>
         </div>
       </main>
+
+      {/* Bottom Navigation */}
+      <footer className="relative z-10 border-t bg-card/80 backdrop-blur-xl px-4 py-3 md:px-6">
+        <div className="mx-auto flex max-w-2xl items-center justify-between">
+          <Button
+            variant="outline"
+            onClick={() => goToQuestion(currentQuestionIndex - 1)}
+            disabled={currentQuestionIndex === 0}
+          >
+            <ChevronLeft className="mr-1 h-4 w-4" />
+            Previous
+          </Button>
+
+          {/* Question dots */}
+          <div className="hidden sm:flex items-center gap-1.5">
+            {questions.map((q, i) => (
+              <button
+                key={q.id}
+                onClick={() => goToQuestion(i)}
+                className={cn(
+                  'h-2.5 w-2.5 rounded-full transition-all',
+                  i === currentQuestionIndex
+                    ? 'w-6 bg-primary'
+                    : answers[q.id]?.trim()
+                      ? 'bg-primary/40'
+                      : 'bg-muted-foreground/20'
+                )}
+              />
+            ))}
+          </div>
+
+          {currentQuestionIndex === questions.length - 1 ? (
+            <Button onClick={() => setShowSubmitDialog(true)} disabled={submitting}>
+              {submitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              Submit Exam
+            </Button>
+          ) : (
+            <Button onClick={() => goToQuestion(currentQuestionIndex + 1)}>
+              Next
+              <ChevronRight className="ml-1 h-4 w-4" />
+            </Button>
+          )}
+        </div>
+      </footer>
+
+      {/* Exit Exam Confirmation Dialog */}
+      <AlertDialog open={showExitDialog} onOpenChange={setShowExitDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2 text-destructive">
+              <ShieldAlert className="h-5 w-5" />
+              Exit Exam?
+            </AlertDialogTitle>
+            <AlertDialogDescription className="space-y-2 text-left">
+              <p>If you exit now, your exam will be submitted automatically.</p>
+              <p className="font-semibold text-foreground">You will NOT be able to return to this attempt again.</p>
+              <p>Your current score will be calculated and may affect your evaluation.</p>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmExit} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+              Exit & Submit
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Submit Confirmation Dialog */}
+      <AlertDialog open={showSubmitDialog} onOpenChange={setShowSubmitDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Submit Exam?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {answeredCount < questions.length ? (
+                <span>You have answered {answeredCount} of {questions.length} questions. {questions.length - answeredCount} question{questions.length - answeredCount > 1 ? 's are' : ' is'} unanswered. Are you sure you want to submit?</span>
+              ) : (
+                <span>You have answered all {questions.length} questions. Ready to submit?</span>
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Go Back</AlertDialogCancel>
+            <AlertDialogAction onClick={() => { setShowSubmitDialog(false); submitExam(); }}>
+              Submit Exam
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
